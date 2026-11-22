@@ -1,11 +1,11 @@
 {
   "agents": {
     "alex": {
-      "last_event": "Stop",
-      "state": "idle",
-      "updated_at": 1795348567
+      "last_event": "SubagentStop",
+      "state": "completed",
+      "updated_at": 1795348569
     }
   },
-  "generated_at": 1795348567,
+  "generated_at": 1795348569,
   "schema": 1
 }
