@@ -119,7 +119,8 @@ def classify(payload, reg, now):
             early = reg["early"].pop(aid, None)
             if early and early["type"] == at:             # its stop arrived first: already finished
                 reg["done"][aid] = {"type": at, "ts": now}
-                return at, "completed", "SubagentStop", "start-after-stop"
+                others = any(v["type"] == at for v in reg["active"].values())
+                return at, ("working" if others else "completed"), "SubagentStop", "start-after-stop"
             if len(reg["active"]) >= MAX_ACTIVE and aid not in reg["active"]:
                 return None, None, EVENT, "registry-full"  # never evict a live registration
             reg["active"][aid] = {"type": at, "start": now, "seen": now}
@@ -128,6 +129,8 @@ def classify(payload, reg, now):
         if act and act["type"] == at:
             del reg["active"][aid]
             reg["done"][aid] = {"type": at, "ts": now}
+            if any(v["type"] == at for v in reg["active"].values()):   # public state is per agent name:
+                return at, "working", EVENT, "stop-matched-others-active"  # another instance is still running
             return at, None, EVENT, "stop-matched"
         if done:                                          # duplicate stop of a finished agent
             return None, None, EVENT, "duplicate-stop"
@@ -154,12 +157,28 @@ def record(payload):
         fcntl.flock(lk, fcntl.LOCK_EX)
         now = int(time.time())      # read AFTER taking the lock: a hook that waited must not use an older clock
         sp = os.path.join(DIR, "status.json")
+        # status.json is rewritten on every event, so ANY structurally invalid content is replaced here
+        # (recovery); only a fixed label is recorded, never the content
+        recovery = None
         try:
             with open(sp) as f:
                 st = json.load(f)
-        except Exception:
+        except FileNotFoundError:
             st = {}
-        agents = st.get("agents") if isinstance(st.get("agents"), dict) else {}
+        except ValueError:
+            st, recovery = {}, "malformed-json"
+        except Exception:
+            st, recovery = {}, "unreadable"
+        if not isinstance(st, dict):
+            st, recovery = {}, "not-an-object"
+        agents = st.get("agents")
+        if not isinstance(agents, dict):
+            recovery = recovery or ("agents-not-an-object" if "agents" in st else None)
+            agents = {}
+        clean = {k: v for k, v in agents.items() if isinstance(k, str) and isinstance(v, dict)}
+        if len(clean) != len(agents):
+            recovery = recovery or "invalid-agent-entries"
+        agents = clean
         reg = load_registry(now)
         # a subagent left "working" with no live registration and no news for ACTIVE_TTL (lost
         # SubagentStop) goes back to idle instead of staying stuck; no completion is invented
@@ -182,6 +201,9 @@ def record(payload):
                  "agent_type": raw if isinstance(raw, str) else None,
                  "has_agent_id": "agent_id" in payload,
                  "accepted": agent is not None, "reason": reason}
+        if recovery:
+            audit["recovery"] = recovery
+            log("recovered status.json: " + recovery)
         if isinstance(aid_raw, str) and aid_raw:       # local audit keeps only a short fingerprint
             audit["agent_ref"] = hashlib.sha256(aid_raw.encode("utf-8", "replace")).hexdigest()[:8]
         with open(os.path.join(DIR, "events.jsonl"), "a") as f:

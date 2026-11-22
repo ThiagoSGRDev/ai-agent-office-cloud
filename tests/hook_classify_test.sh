@@ -233,6 +233,79 @@ ok "C16 o remoto usado é o bare temporário (e não o real)" "$([ "$(git -C "$W
 ok "C16 o hook tentou publicar e concluiu 'unchanged'" "$(tail -n1 status/publish.log | grep -q unchanged; echo $?)"
 ok "C16 .dirty limpo" "$([ ! -e status/.dirty ]; echo $?)"
 
+# C17 (P1): several instances of the same agent: "completed" only when the LAST one finishes
+newenv
+h SubagentStart '{"agent_type":"lucas","agent_id":"L1"}'; h SubagentStart '{"agent_type":"lucas","agent_id":"L2"}'
+ok "C17 duas instâncias iniciadas: lucas working, 2 registros ativos" "$([ "$(st lucas)" = working ] && [ "$(reg active)" = 2 ]; echo $?)"
+h SubagentStop '{"agent_type":"lucas","agent_id":"L1"}'
+ok "C17 uma encerrada: lucas continua working (não completed)" "$([ "$(st lucas)" = working ] && [ "$(aud reason)" = stop-matched-others-active ] && [ "$(aud accepted)" = True ]; echo $?)"
+ok "C17 a instância encerrada saiu da tabela ativa e a outra permanece" "$([ "$(regid active L1)" = False ] && [ "$(regid active L2)" = True ]; echo $?)"
+h PreToolUse '{"agent_type":"lucas","agent_id":"L2"}'
+ok "C17 enquanto L2 existe, atividade dela mantém working" "$([ "$(st lucas)" = working ]; echo $?)"
+h SubagentStop '{"agent_type":"lucas","agent_id":"L1"}'
+ok "C17 Stop duplicado de L1 é ignorado e lucas segue working" "$([ "$(st lucas)" = working ] && [ "$(aud reason)" = duplicate-stop ]; echo $?)"
+h SubagentStart '{"agent_type":"lucas","agent_id":"L1"}'
+ok "C17 Start duplicado de L1 (já concluído) é ignorado e não cria instância fantasma" "$([ "$(aud reason)" = duplicate-start-after-stop ] && [ "$(reg active)" = 1 ]; echo $?)"
+h SubagentStop '{"agent_type":"lucas","agent_id":"L3"}'
+ok "C17 Stop fora de ordem (L3 sem Start) é ignorado e não conclui lucas" "$([ "$(st lucas)" = working ] && [ "$(aud reason)" = no-matching-start ]; echo $?)"
+h SubagentStart '{"agent_type":"lucas","agent_id":"L3"}'
+ok "C17 Start tardio de L3 com L2 ainda ativa: lucas working (não completed)" "$([ "$(st lucas)" = working ] && [ "$(aud reason)" = start-after-stop ] && [ "$(reg active)" = 1 ]; echo $?)"
+h SubagentStop '{"agent_type":"lucas","agent_id":"L2"}'
+ok "C17 encerramento da última instância (L2) resulta em completed" "$([ "$(st lucas)" = completed ] && [ "$(aud reason)" = stop-matched ] && [ "$(reg active)" = 0 ]; echo $?)"
+h SubagentStart '{"agent_type":"sofia","agent_id":"S1"}'; h SubagentStart '{"agent_type":"sofia","agent_id":"S2"}'; h SubagentStart '{"agent_type":"sofia","agent_id":"S3"}'
+h SubagentStop '{"agent_type":"sofia","agent_id":"S2"}'; h SubagentStop '{"agent_type":"sofia","agent_id":"S3"}'
+ok "C17b três instâncias, duas encerradas fora de ordem: sofia ainda working" "$([ "$(st sofia)" = working ] && [ "$(regid active S1)" = True ]; echo $?)"
+h SubagentStart '{"agent_type":"noah","agent_id":"N7"}'; h SubagentStop '{"agent_type":"noah","agent_id":"N7"}'
+ok "C17c tipos diferentes não se influenciam: noah (1 instância) conclui normalmente com sofia ativa" "$([ "$(st noah)" = completed ] && [ "$(st sofia)" = working ]; echo $?)"
+
+# C17d: concurrency between instances of the same type; nothing internal reaches the remote snapshot
+newenv; rcs="$S/rcs$N"; : > "$rcs"
+for i in $(seq 1 10); do ( printf '{"agent_type":"lucas","agent_id":"Q%d"}' "$i" | python3 "$H" SubagentStart >/dev/null 2>&1; echo $? >> "$rcs" ) & done; wait
+for i in $(seq 1 9); do ( printf '{"agent_type":"lucas","agent_id":"Q%d"}' "$i" | python3 "$H" SubagentStop >/dev/null 2>&1; echo $? >> "$rcs" ) & done; wait
+ok "C17d 10 inícios e 9 fins concorrentes do mesmo tipo: todos saem com 0" "$([ "$(wc -l < "$rcs")" = 19 ] && [ "$(grep -vc '^0$' "$rcs")" = 0 ]; echo $?)"
+ok "C17d com uma instância (Q10) ainda ativa, lucas continua working" "$([ "$(st lucas)" = working ] && [ "$(reg active)" = 1 ] && [ "$(regid active Q10)" = True ]; echo $?)"
+h SubagentStop '{"agent_type":"lucas","agent_id":"Q10"}' --publish
+PUB="$(git -C "$O" show data:status.json 2>/dev/null)"
+ok "C17d encerrada a última, o remoto mostra lucas completed" "$(printf '%s' "$PUB" | python3 -c "import json,sys;assert json.load(sys.stdin)['agents']['lucas']['state']=='completed'" 2>/dev/null; echo $?)"
+ok "C17d nenhum identificador interno (Q*/L*) no snapshot público" "$(printf '%s' "$PUB" | grep -qE 'Q[0-9]|L[0-9]|agent_id|agent_ref'; [ $? -ne 0 ]; echo $?)"
+
+# C18 (P2): status.json valid JSON of the wrong shape (or broken) must never stop future updates
+p2(){ local label="$1" content="$2" want="$3"; newenv; mkdir -p status
+  [ "$content" = "__absent__" ] || printf '%s' "$content" > status/status.json
+  h Stop '{"agent_type":"alex"}'; local rc=$?
+  ok "C18 $label: o hook sai com 0 e sem stdout" "$rc"
+  ok "C18 $label: status.json recuperado (schema/generated_at/agents) e Alex idle" "$(python3 -c "import json;d=json.load(open('status/status.json'));assert isinstance(d,dict) and set(d)=={'schema','generated_at','agents'} and d['agents']['alex']['state']=='idle'" 2>/dev/null; echo $?)"
+  ok "C18 $label: recuperação auditada como '$want'" "$([ "$(aud recovery)" = "$want" ]; echo $?)"
+  ok "C18 $label: o evento foi auditado normalmente (accepted/reason)" "$([ "$(aud accepted)" = True ] && [ "$(aud reason)" = main-session ]; echo $?)"
+  h PreToolUse '{"agent_type":"alex"}'
+  ok "C18 $label: atualizações futuras funcionam (Alex working)" "$([ "$(st alex)" = working ]; echo $?)"
+}
+p2 "lista vazia []" '[]' not-an-object
+p2 "string JSON" '"SECRETTEXT-should-not-leak"' not-an-object
+ok "C18 string JSON: o conteúdo inválido não vaza para auditoria, log ou status" "$(grep -qs 'SECRETTEXT' status/events.jsonl status/publish.log status/status.json; [ $? -ne 0 ]; echo $?)"
+p2 "número JSON" '42' not-an-object
+p2 "booleano JSON" 'true' not-an-object
+p2 "null JSON" 'null' not-an-object
+p2 "JSON malformado" '{{{ not json' malformed-json
+p2 "arquivo vazio" '' malformed-json
+p2 "agents não é objeto" '{"schema":1,"agents":[]}' agents-not-an-object
+p2 "arquivo inexistente" '__absent__' None
+# valid file: content preserved, no recovery
+newenv; mkdir -p status
+printf '%s' '{"schema":1,"generated_at":1700000000,"agents":{"sofia":{"state":"completed","updated_at":1700000000,"last_event":"SubagentStop"}}}' > status/status.json
+h Stop '{"agent_type":"alex"}'
+ok "C18 arquivo válido: conteúdo existente preservado (sofia completed, carimbo e evento originais)" "$(python3 -c "import json;a=json.load(open('status/status.json'))['agents'];assert a['sofia']=={'state':'completed','updated_at':1700000000,'last_event':'SubagentStop'} and a['alex']['state']=='idle'" 2>/dev/null; echo $?)"
+ok "C18 arquivo válido: nenhuma recuperação auditada" "$([ "$(aud recovery)" = None ]; echo $?)"
+# entries of the wrong type are dropped, valid siblings kept
+newenv; mkdir -p status
+printf '%s' '{"schema":1,"generated_at":1,"agents":{"lucas":"x","sofia":{"state":"completed","updated_at":1700000000,"last_event":"SubagentStop"}}}' > status/status.json
+h Stop '{"agent_type":"alex"}'
+ok "C18 entrada de agente inválida descartada, a válida mantida; recuperação auditada" "$(python3 -c "import json;a=json.load(open('status/status.json'))['agents'];assert 'lucas' not in a and a['sofia']['state']=='completed'" 2>/dev/null && [ "$(aud recovery)" = invalid-agent-entries ]; echo $?)"
+# recovery with --publish: only the allowlisted, valid snapshot reaches the (temporary) remote
+newenv; mkdir -p status; printf '%s' '[]' > status/status.json
+h Stop '{"agent_type":"alex"}' --publish
+ok "C18 recuperação seguida de publicação: remoto recebe snapshot válido e só a lista permitida" "$(git -C "$O" show data:status.json | python3 -c "import json,sys;d=json.load(sys.stdin);assert set(d)=={'schema','generated_at','agents'} and d['agents']['alex']['state']=='idle' and all(set(v)=={'state','updated_at','last_event'} for v in d['agents'].values())" 2>/dev/null; echo $?)"
+
 # C13: public state file keeps the exact schema after all of the above
 ok "C13 status.json local: schema/generated_at/agents e campos por agente inalterados" "$(python3 -c "import json;d=json.load(open('status/status.json'));assert set(d)=={'schema','generated_at','agents'} and all(set(v)=={'state','updated_at','last_event'} for v in d['agents'].values())" 2>/dev/null; echo $?)"
 exit $FAIL
