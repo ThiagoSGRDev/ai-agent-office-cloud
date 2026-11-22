@@ -11,11 +11,11 @@
       "updated_at": 1795359464
     },
     "sofia": {
-      "last_event": "SubagentStart",
-      "state": "working",
-      "updated_at": 1795359605
+      "last_event": "SubagentStop",
+      "state": "completed",
+      "updated_at": 1795359611
     }
   },
-  "generated_at": 1795359605,
+  "generated_at": 1795359611,
   "schema": 1
 }
