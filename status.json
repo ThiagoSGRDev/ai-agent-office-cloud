@@ -1,14 +1,14 @@
 {
   "agents": {
     "alex": {
-      "last_event": "Stop",
-      "state": "idle",
-      "updated_at": 1795355876
+      "last_event": "PreToolUse",
+      "state": "working",
+      "updated_at": 1795356326
     },
     "lucas": {
       "last_event": "SubagentStop",
       "state": "completed",
-      "updated_at": 1795355847
+      "updated_at": 1795356340
     },
     "sofia": {
       "last_event": "SubagentStop",
@@ -16,6 +16,6 @@
       "updated_at": 1795355855
     }
   },
-  "generated_at": 1795355876,
+  "generated_at": 1795356340,
   "schema": 1
 }
