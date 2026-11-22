@@ -15,7 +15,10 @@
   <div id="banner" role="status" aria-live="polite" hidden></div>
 </header>
 <main id="stage">
-  <canvas id="office" role="img" aria-label="Escritório virtual com os agentes em suas estações"></canvas>
+  <div id="world">
+    <canvas id="office" role="img" aria-label="Escritório virtual com os agentes em suas estações"></canvas>
+    <div id="labels"></div>
+  </div>
   <noscript><p class="noscript">Este escritório precisa de JavaScript.</p></noscript>
 </main>
 <footer id="bottom">
@@ -27,7 +30,7 @@
     <button id="btn-zoom-in" type="button" aria-label="Aumentar zoom">+</button>
     <button id="btn-fit" type="button">Ajustar</button>
   </div>
-  <p id="note">Os estados vêm de eventos reais publicados pelas sessões e podem ter alguns minutos de atraso. Sem dado recente, o agente aparece como desconhecido.</p>
+  <p id="note">O estado e a idade nas placas são o dado real, publicado pelas sessões, com alguns minutos de atraso. Passeios de descanso são ilustrativos e só ocorrem quando o agente está ocioso. Sem dado recente, o agente fica parado e cinza.</p>
 </footer>
 <ul id="sr" class="sr-only" aria-label="Estado dos agentes"></ul>
 <script type="module" src="js/main.js"></script>

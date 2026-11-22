@@ -1,10 +1,10 @@
-import { AGENTS, POLL_MS, STATE_STYLE } from "./config.js";
+import { AGENTS, POLL_MS, STATE_STYLE, FPS_BUSY, IDLE_TICK_MS } from "./config.js";
 import { createStore, resolveAgent, resolveBanner, formatAge } from "./state.js";
 import { createOffice } from "./office.js";
 import { bindInput } from "./input.js";
 
 const $ = (id) => document.getElementById(id);
-const canvas = $("office");
+const stage = $("stage"), canvas = $("office");
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 const prefs = { paused: false, reduced: false };
@@ -12,8 +12,8 @@ try { prefs.reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matc
 try { const s = localStorage.getItem("aao-reduced"); if (s !== null) prefs.reduced = s === "1"; } catch { /* storage may be blocked */ }
 
 const store = createStore(onData);
-const office = createOffice(canvas, () => ({ snap: store.snap, nowSec: nowSec(), reduced: prefs.reduced }));
-bindInput(canvas, office);
+const office = createOffice(stage, $("world"), canvas, $("labels"), () => ({ snap: store.snap, nowSec: nowSec(), reduced: prefs.reduced }));
+bindInput(stage, office);
 
 // ---- legend (static) -------------------------------------------------------------------------
 for (const k of ["working", "idle", "completed", "blocked", "unknown", "standby"]) {
@@ -24,35 +24,53 @@ for (const k of ["working", "idle", "completed", "blocked", "unknown", "standby"
 }
 
 // ---- DOM mirror (accessibility + verifiable state); textContent only, never innerHTML ----------
+const srItems = {};
+for (const a of AGENTS) { const li = document.createElement("li"); li.dataset.agent = a.id; $("sr").append(li); srItems[a.id] = li; }
 function updateDom() {
   const t = nowSec(), banner = $("banner"), b = resolveBanner(store, t);
   if (b) { banner.hidden = false; banner.dataset.level = b.level; banner.textContent = b.text; } else { banner.hidden = true; banner.textContent = ""; }
-  const sr = $("sr");
-  sr.replaceChildren();
   for (const a of AGENTS) {
-    const r = resolveAgent(a, store.snap, t), li = document.createElement("li");
-    li.dataset.agent = a.id; li.dataset.state = r.state; li.dataset.reason = r.reason;
+    const r = resolveAgent(a, store.snap, t), li = srItems[a.id];
+    li.dataset.state = r.state; li.dataset.reason = r.reason;
     li.textContent = `${a.name}, ${a.role}: ${STATE_STYLE[r.state].label}${r.ageSec != null ? ", há " + formatAge(r.ageSec) : ""}`;
-    sr.append(li);
   }
+  office.updatePlates();
+}
+let mirrorAt = 0;
+function mirror(force) {                                   // where each character is (decorative layer), throttled
+  const now = performance.now();
+  if (!force && now - mirrorAt < 250) return;
+  mirrorAt = now;
+  const d = office.describe();
+  for (const a of AGENTS) { const li = srItems[a.id], v = d[a.id]; li.dataset.mode = v.mode; li.dataset.x = v.x; li.dataset.y = v.y; li.dataset.plan = v.plan; li.dataset.pose = v.pose; }
 }
 
-function onData() { updateDom(); office.render(); document.body.dataset.ready = "1"; }
+function onData() { updateDom(); office.onData(); mirror(true); document.body.dataset.ready = "1"; }
 
-// ---- animation loop: 8 fps, stops when paused / reduced / tab hidden ---------------------------
-let raf = 0, last = 0;
+// ---- animation loop: ~12 fps while something moves, a cheap 4 Hz scheduler tick otherwise ---------
+let raf = 0, timer = 0, last = 0;
 const shouldAnimate = () => !prefs.paused && !prefs.reduced && !document.hidden;
-function loop(ts) {
-  raf = requestAnimationFrame(loop);
-  if (ts - last < 125) return;
+function frameLoop(ts) {
+  raf = 0;
+  if (!shouldAnimate()) return;
+  const dt = last ? Math.min(0.25, (ts - last) / 1000) : 0;
   last = ts;
-  office.step();
+  office.update(dt);
+  mirror(false);
+  schedule();
+}
+function schedule() {
+  if (!shouldAnimate() || raf || timer) return;
+  timer = setTimeout(() => { timer = 0; raf = requestAnimationFrame(frameLoop); }, office.busy() ? Math.round(1000 / FPS_BUSY) - 16 : IDLE_TICK_MS);
 }
 function syncAnimation() {
   office.setAnimate(shouldAnimate());
-  if (shouldAnimate() && !raf) raf = requestAnimationFrame(loop);
-  if (!shouldAnimate() && raf) { cancelAnimationFrame(raf); raf = 0; }
-  office.render();
+  if (timer) { clearTimeout(timer); timer = 0; }
+  if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  last = 0;
+  office.update(0);                                        // applies "reduced motion" (everyone back at the desk)
+  office.render(); mirror(true);
+  schedule();
 }
 
 // ---- controls ---------------------------------------------------------------------------------
@@ -73,9 +91,9 @@ $("btn-zoom-out").addEventListener("click", () => { const c = center(); office.z
 $("btn-fit").addEventListener("click", () => office.resetView());
 
 // ---- lifecycle ----------------------------------------------------------------------------------
-new ResizeObserver(() => office.resize()).observe(canvas);
+new ResizeObserver(() => office.resize()).observe(stage);
 document.addEventListener("visibilitychange", () => { syncAnimation(); if (!document.hidden) store.refresh(); });
-setInterval(() => { updateDom(); if (!raf) office.render(); }, 15_000);   // keep ages/banners honest while paused
+setInterval(() => { updateDom(); }, 15_000);               // keep ages/banners honest even while paused
 (function poll() { if (!document.hidden) store.refresh(); setTimeout(poll, POLL_MS); })();
 updateDom();
 office.resize();

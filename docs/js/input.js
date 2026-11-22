@@ -1,20 +1,20 @@
-// Pointer input: drag to pan, pinch / wheel / buttons to zoom, double tap (or click) to reset.
-export function bindInput(canvas, office) {
+// Pointer input on the stage: drag to pan, pinch / wheel / buttons to zoom, double tap (or double click) to reset.
+export function bindInput(stage, office) {
   const pts = new Map();
   let pinchBase = 0, lastTap = 0;
   const dev = (e) => {
-    const r = canvas.getBoundingClientRect(), k = office.dpr;
+    const r = stage.getBoundingClientRect(), k = office.dpr;
     return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
   };
-  canvas.addEventListener("pointerdown", (e) => {
-    canvas.setPointerCapture(e.pointerId);
+  stage.addEventListener("pointerdown", (e) => {
+    stage.setPointerCapture(e.pointerId);
     pts.set(e.pointerId, dev(e));
     if (pts.size === 2) { const [a, b] = [...pts.values()]; pinchBase = Math.hypot(a.x - b.x, a.y - b.y); }
     const now = performance.now();
     if (pts.size === 1 && now - lastTap < 300) office.resetView();
     if (pts.size === 1) lastTap = now;
   });
-  canvas.addEventListener("pointermove", (e) => {
+  stage.addEventListener("pointermove", (e) => {
     if (!pts.has(e.pointerId)) return;
     const prev = pts.get(e.pointerId), cur = dev(e);
     pts.set(e.pointerId, cur);
@@ -26,10 +26,10 @@ export function bindInput(canvas, office) {
     }
   });
   const end = (e) => { pts.delete(e.pointerId); pinchBase = 0; };
-  canvas.addEventListener("pointerup", end);
-  canvas.addEventListener("pointercancel", end);
+  stage.addEventListener("pointerup", end);
+  stage.addEventListener("pointercancel", end);
   let wheelAt = 0;
-  canvas.addEventListener("wheel", (e) => {
+  stage.addEventListener("wheel", (e) => {
     e.preventDefault();
     const now = performance.now();
     if (now - wheelAt < 120) return;
@@ -37,5 +37,5 @@ export function bindInput(canvas, office) {
     const p = dev(e);
     office.zoomBy(e.deltaY < 0 ? 1 : -1, p.x, p.y);
   }, { passive: false });
-  canvas.addEventListener("dblclick", () => office.resetView());
+  stage.addEventListener("dblclick", () => office.resetView());
 }

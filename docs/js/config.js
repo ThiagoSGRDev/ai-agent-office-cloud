@@ -33,3 +33,19 @@ export const STATE_STYLE = {
   unknown:   { label: "Desconhecido", color: "#64748b" },
   standby:   { label: "Em espera",   color: "#475569" },
 };
+
+// ---- movement / behaviour (decorative layer; never changes the evidence shown on the nameplates) ----
+export const WALK_SPEED = 24;            // map px per second
+export const FPS_BUSY = 12;              // frames per second while something animates
+export const IDLE_TICK_MS = 250;         // scheduler tick when nothing animates (no repaint)
+export const MAX_WALKERS = 2;            // decorative walkers at the same time
+export const MEETING_COOLDOWN_S = 300;   // at most one end-of-run meeting per 5 min
+
+// Per-agent identity. interval = seconds between decorative outings (idle only);
+// acts = weights of the outings; typing = frame divisor of the typing hands (1 = fastest).
+export const PERSONA = {
+  alex:  { interval: [150, 280], acts: { rounds: 3, whiteboard: 2, coffee: 2, stretch: 1 }, typing: 2 },
+  lucas: { interval: [100, 200], acts: { coffee: 4, sofa: 2, stretch: 2, plant: 1 },        typing: 1 },
+  sofia: { interval: [180, 320], acts: { whiteboard: 3, plant: 2, sofa: 2, stretch: 1 },    typing: 2 },
+};
+export const DEFAULT_PERSONA = { interval: [180, 320], acts: { coffee: 2, stretch: 2, sofa: 1, plant: 1 }, typing: 2 };

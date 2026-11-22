@@ -17,6 +17,7 @@ export function parseSnapshot(text) {
     agents[a.id] = {
       state: KNOWN_STATES.includes(v.state) ? v.state : null,      // anything else => unknown later
       updatedAt: Number.isInteger(v.updated_at) ? v.updated_at : null,
+      lastEvent: typeof v.last_event === "string" ? v.last_event.slice(0, 20) : null,
     };
   }
   return { generatedAt: j.generated_at, agents };

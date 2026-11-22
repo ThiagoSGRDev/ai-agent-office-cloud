@@ -1,199 +1,155 @@
-// Office rendering: two purpose-built layouts (landscape for desktop, portrait for phones),
-// a pre-rendered static layer, animated characters, and a crisp device-resolution text layer.
-import { AGENTS, CELEBRATE_S, STATE_STYLE } from "./config.js";
+// Rendering. The pixel map lives in a SMALL logical canvas (176x320 / 352x176) that the browser scales
+// with CSS (image-rendering: pixelated); nameplates are DOM elements (crisp text, updated only when needed).
+import { AGENTS, CELEBRATE_S, STATE_STYLE, PERSONA, DEFAULT_PERSONA } from "./config.js";
 import { resolveAgent, formatAge } from "./state.js";
-import { rect, drawPerson, drawChair, drawMonitor, drawBubble, drawConfetti } from "./sprites.js";
+import { rect, drawPerson, drawStanding, drawChair, drawDesk, drawMonitor, drawBubble, drawConfetti } from "./sprites.js";
+import { LAYOUTS, DESK_ORDER, cellGeom, buildBackground } from "./layout.js";
+import { createScene } from "./scene.js";
 
-const DESK_ORDER = ["alex", "lucas", "sofia", "arthur", "noah", "maya", "ethan", "olivia"];
 const BY_ID = Object.fromEntries(AGENTS.map((a) => [a.id, a]));
 const MAX_ZOOM = 4;
+const NAME_STATE = (r) => (r.state === "unknown" ? (r.reason === "dado-antigo" ? "Dado antigo" : r.reason === "relogio" ? "Relógio?" : "Sem dados") : STATE_STYLE[r.state].label);
 
-function grid(cols, rows, x0, y0, cw, ch) {
-  const out = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out.push({ x: x0 + c * cw, y: y0 + r * ch, w: cw, h: ch });
-  return out;
-}
-
-// ---- props -----------------------------------------------------------------------------------
-function plant(g, x, y) { rect(g, x + 2, y + 8, 6, 5, "#92400e"); rect(g, x + 1, y + 2, 8, 7, "#16a34a"); rect(g, x + 3, y, 4, 4, "#22c55e"); }
-function sofa(g, x, y, w) { rect(g, x, y, w, 5, "#7c3aed"); rect(g, x, y + 5, w, 7, "#8b5cf6"); rect(g, x - 2, y + 3, 3, 9, "#6d28d9"); rect(g, x + w - 1, y + 3, 3, 9, "#6d28d9"); }
-function table(g, x, y, w, h) { rect(g, x, y, w, h, "#b08968"); rect(g, x, y + h - 2, w, 2, "#8d6e4f"); }
-function seat(g, x, y) { rect(g, x, y, 6, 6, "#475569"); rect(g, x + 1, y + 1, 4, 4, "#64748b"); }
-function board(g, x, y, w) { rect(g, x, y, w, 9, "#f8fafc"); rect(g, x, y, w, 1, "#94a3b8"); rect(g, x + 3, y + 3, w - 12, 1, "#38bdf8"); rect(g, x + 3, y + 5, w - 18, 1, "#4ade80"); }
-function coffee(g, x, y) { rect(g, x, y, 12, 14, "#334155"); rect(g, x + 2, y + 2, 8, 4, "#0f172a"); rect(g, x + 4, y + 8, 4, 4, "#f8fafc"); }
-
-const LAYOUTS = {
-  landscape: {
-    w: 320, h: 176, padTop: 8, cells: grid(4, 2, 56, 16, 48, 56),
-    zones: [
-      { label: "RECEPÇÃO", x: 0, y: 12, w: 56, h: 116, floor: "#e7dcc3" },
-      { label: "", x: 56, y: 12, w: 192, h: 116, floor: "#e8ecef" },
-      { label: "SALA DE REUNIÃO", x: 248, y: 12, w: 72, h: 116, floor: "#cfd8e6" },
-      { label: "DESCANSO", x: 0, y: 128, w: 320, h: 48, floor: "#cfe0c8" },
-    ],
-    props(g) {
-      rect(g, 6, 58, 44, 10, "#8d6e4f"); rect(g, 6, 58, 44, 3, "#b08968"); plant(g, 4, 26); plant(g, 40, 26);
-      board(g, 256, 20, 56); table(g, 258, 52, 52, 24); seat(g, 262, 44); seat(g, 292, 44); seat(g, 262, 78); seat(g, 292, 78);
-      rect(g, 250, 12, 1, 116, "#9fb3c8");
-      sofa(g, 16, 142, 52); table(g, 82, 150, 26, 10); plant(g, 120, 140); coffee(g, 200, 138); plant(g, 290, 140);
-    },
-  },
-  portrait: {
-    w: 176, h: 320, padTop: 4, cells: grid(2, 4, 8, 64, 80, 48),
-    zones: [
-      { label: "RECEPÇÃO", x: 0, y: 12, w: 88, h: 52, floor: "#e7dcc3" },
-      { label: "SALA DE REUNIÃO", x: 88, y: 12, w: 88, h: 52, floor: "#cfd8e6" },
-      { label: "", x: 0, y: 64, w: 176, h: 192, floor: "#e8ecef" },
-      { label: "DESCANSO", x: 0, y: 256, w: 176, h: 64, floor: "#cfe0c8" },
-    ],
-    props(g) {
-      rect(g, 14, 40, 44, 9, "#8d6e4f"); rect(g, 14, 40, 44, 3, "#b08968"); plant(g, 4, 26); plant(g, 70, 26);
-      board(g, 104, 20, 40); table(g, 108, 36, 40, 14); seat(g, 100, 34); seat(g, 150, 34);
-      rect(g, 88, 12, 1, 52, "#9fb3c8");
-      sofa(g, 14, 274, 60); table(g, 90, 280, 28, 10, "#b08968"); plant(g, 130, 270); coffee(g, 150, 272); plant(g, 6, 300);
-    },
-  },
-};
-
-function cellGeom(L, i) {
-  const c = L.cells[i];
-  const dx = c.x + Math.round((c.w - 32) / 2);
-  const py = c.y + L.padTop;
-  return { c, dx, dy: py + 14, px: dx + 9, py, cx: c.x + c.w / 2, labelY: py + 14 + 9 + 3 };
-}
-
-function buildLayers(L) {
-  const mk = () => { const cv = document.createElement("canvas"); cv.width = L.w; cv.height = L.h; return cv; };
-  const bg = mk(), front = mk();
-  const g = bg.getContext("2d");
-  rect(g, 0, 0, L.w, L.h, "#e8ecef");
-  for (const z of L.zones) {
-    rect(g, z.x, z.y, z.w, z.h, z.floor);
-    g.fillStyle = "rgba(0,0,0,.05)";
-    for (let x = z.x; x < z.x + z.w; x += 16) g.fillRect(x, z.y, 1, z.h);
-    for (let y = z.y; y < z.y + z.h; y += 16) g.fillRect(z.x, y, z.w, 1);
-  }
-  rect(g, 0, 0, L.w, 12, "#455a64"); rect(g, 0, 12, L.w, 1, "#37474f");
-  for (let x = 8; x < L.w - 20; x += 40) { rect(g, x, 2, 24, 7, "#90caf9"); rect(g, x, 2, 24, 1, "#bbdefb"); }
-  L.props(g);
-  const f = front.getContext("2d");              // desks are drawn IN FRONT of the seated characters
-  for (let i = 0; i < L.cells.length; i++) {
-    const { dx, dy } = cellGeom(L, i);
-    rect(f, dx, dy, 32, 5, "#a97142"); rect(f, dx, dy, 32, 1, "#c58b57"); rect(f, dx, dy + 5, 32, 4, "#8a5a2e");
-    rect(f, dx + 1, dy + 9, 2, 2, "#5b3a1b"); rect(f, dx + 29, dy + 9, 2, 2, "#5b3a1b");
-    rect(f, dx + 26, dy + 1, 3, 3, "#f8fafc"); rect(f, dx + 27, dy + 1, 1, 1, "#92400e");   // mug
-  }
-  return { bg, front };
-}
-
-// ---- factory ---------------------------------------------------------------------------------
-export function createOffice(canvas, getData) {
-  const ctx = canvas.getContext("2d");
-  const mapCv = document.createElement("canvas");
-  const mg = mapCv.getContext("2d");
-  const layers = {};
+export function createOffice(stage, world, canvas, labels, getData) {
+  const g = canvas.getContext("2d");
+  const scene = createScene();
+  const bgs = {};
   const view = { zoom: 0, ox: 0, oy: 0 };
-  const o = { layout: "landscape", tick: 0, animate: true, dpr: 1, cw: 0, ch: 0 };
+  const o = { layout: "", animate: true, dpr: 1, cw: 0, ch: 0, geoKey: "" };
+  const plates = {}, zones = [];
   canvas.dataset.frames = "0";
+
+  // ---- DOM labels ---------------------------------------------------------------------------------
+  for (const id of DESK_ORDER) {
+    const el = document.createElement("div"), l1 = document.createElement("div"), l2 = document.createElement("div"), dot = document.createElement("span"), tx = document.createElement("span");
+    el.className = "plate"; l1.className = "l1"; l2.className = "l2"; dot.className = "dot"; l2.append(dot, tx); el.append(l1, l2); labels.append(el);
+    plates[id] = { el, l1, tx, dot };
+  }
 
   function pickLayout() { return o.cw / Math.max(1, o.ch) < 0.9 ? "portrait" : "landscape"; }
 
   function geometry() {
     const L = LAYOUTS[o.layout];
     const fit = Math.max(1, Math.floor(Math.min(o.cw / L.w, o.ch / L.h)));
-    const S = fit + view.zoom;
-    const mw = L.w * S, mh = L.h * S;
+    const S = fit + view.zoom, mw = L.w * S, mh = L.h * S;
     const ox = mw <= o.cw ? (o.cw - mw) / 2 : Math.min(0, Math.max(o.cw - mw, view.ox));
     const oy = mh <= o.ch ? (o.ch - mh) / 2 : Math.min(0, Math.max(o.ch - mh, view.oy));
-    return { L, S, fit, ox, oy, mw, mh };
+    return { L, S, fit, ox, oy, mw, mh, k: S / o.dpr };
+  }
+
+  function applyGeometry() {
+    const { L, S, ox, oy, mw, mh, k } = geometry();
+    const key = [o.layout, S, Math.round(ox), Math.round(oy), o.dpr].join("|");
+    if (key === o.geoKey) return;
+    o.geoKey = key;
+    world.style.width = mw / o.dpr + "px"; world.style.height = mh / o.dpr + "px";
+    world.style.transform = `translate(${ox / o.dpr}px, ${oy / o.dpr}px)`;
+    world.dataset.scale = String(S);
+    DESK_ORDER.forEach((id, i) => {
+      const gm = cellGeom(L, i), p = plates[id].el;
+      p.style.left = gm.cx * k + "px"; p.style.top = gm.labelY * k + "px"; p.dataset.maxw = String(Math.floor(gm.c.w * k - 4));
+    });
+    zones.forEach((z) => z.el.remove()); zones.length = 0;
+    for (const z of L.zones) if (z.label) { const el = document.createElement("div"); el.className = "zone"; el.textContent = z.label; el.style.left = (z.x + 4) * k + "px"; el.style.top = (z.y + 3) * k + "px"; labels.append(el); zones.push({ el }); }
+    fitPlates();
+  }
+
+  function fitPlates() {                         // shrink the text of a plate only if it does not fit its desk cell
+    for (const id of DESK_ORDER) {
+      const p = plates[id].el, max = Number(p.dataset.maxw || 0);
+      p.style.fontSize = ""; if (max && p.scrollWidth > max) p.style.fontSize = Math.max(8, Math.floor(11 * max / p.scrollWidth)) + "px";
+    }
+  }
+
+  /** Nameplates always show the EVIDENCE (state + age), never the decorative movement. */
+  function updatePlates() {
+    const { snap, nowSec } = getData();
+    for (const id of DESK_ORDER) {
+      const a = BY_ID[id], r = resolveAgent(a, snap, nowSec), st = STATE_STYLE[r.state], pl = plates[id];
+      pl.l1.textContent = `${a.name} · ${a.role}`;
+      pl.tx.textContent = ` ${NAME_STATE(r)}${r.ageSec != null && r.state !== "standby" ? " · " + formatAge(r.ageSec) : ""}`;
+      pl.dot.style.background = st.color;
+      pl.el.dataset.state = r.state;
+    }
+    fitPlates();
   }
 
   function resize() {
-    const r = canvas.getBoundingClientRect();
+    const r = stage.getBoundingClientRect();
     o.dpr = window.devicePixelRatio || 1;
-    o.cw = Math.max(1, Math.round(r.width * o.dpr));
-    o.ch = Math.max(1, Math.round(r.height * o.dpr));
-    canvas.width = o.cw; canvas.height = o.ch;
+    o.cw = Math.max(1, Math.round(r.width * o.dpr)); o.ch = Math.max(1, Math.round(r.height * o.dpr));
     const next = pickLayout();
-    if (next !== o.layout) { o.layout = next; view.zoom = 0; }
-    canvas.dataset.layout = o.layout;
-    render();
+    if (next !== o.layout) {
+      o.layout = next; view.zoom = 0; view.ox = view.oy = 0; o.geoKey = "";
+      canvas.width = LAYOUTS[next].w; canvas.height = LAYOUTS[next].h;
+      scene.setLayout(LAYOUTS[next]);
+      canvas.dataset.layout = next;
+    }
+    o.geoKey = "";
+    applyGeometry(); updatePlates(); render();
   }
 
-  function text(g, S, ox, oy, L) {
-    const { snap, nowSec } = getData();
-    const fs = 11 * o.dpr;
-    g.textBaseline = "top"; g.textAlign = "center";
-    for (const z of L.zones) {
-      if (!z.label) continue;
-      g.font = `700 ${Math.max(8, 9 * o.dpr)}px system-ui, sans-serif`; g.textAlign = "left";
-      g.fillStyle = "rgba(51,65,85,.75)"; g.fillText(z.label, ox + (z.x + 4) * S, oy + (z.y + 3) * S);
-    }
-    g.textAlign = "center";
-    DESK_ORDER.forEach((id, i) => {
-      const a = BY_ID[id], gm = cellGeom(L, i), r = resolveAgent(a, snap, nowSec);
-      const st = STATE_STYLE[r.state];
-      const label = r.state === "unknown" ? (r.reason === "dado-antigo" ? "Dado antigo" : r.reason === "relogio" ? "Relógio?" : "Sem dados") : st.label;
-      const age = r.ageSec != null && r.state !== "standby" ? " · " + formatAge(r.ageSec) : "";
-      const l1 = `${a.name} · ${a.role}`, l2 = `● ${label}${age}`;
-      const maxW = gm.c.w * S - 6 * o.dpr;
-      let px = fs;
-      g.font = `600 ${px}px system-ui, sans-serif`;
-      const w = Math.max(g.measureText(l1).width, g.measureText(l2).width);
-      if (w > maxW) { px = Math.max(8 * o.dpr, px * maxW / w); g.font = `600 ${px}px system-ui, sans-serif`; }
-      const w1 = g.measureText(l1).width, w2 = g.measureText(l2).width, bw = Math.max(w1, w2) + 10 * o.dpr, bh = px * 2 + 9 * o.dpr;
-      const x = ox + gm.cx * S, y = oy + gm.labelY * S;
-      g.fillStyle = "rgba(15,23,42,.9)"; g.beginPath(); g.roundRect(x - bw / 2, y, bw, bh, 4 * o.dpr); g.fill();
-      g.fillStyle = "#f8fafc"; g.fillText(l1, x, y + 3 * o.dpr);
-      g.fillStyle = "#cbd5e1"; g.fillText(l2, x, y + 5 * o.dpr + px);
-      g.fillStyle = st.color; g.textAlign = "left"; g.fillText("●", x - w2 / 2, y + 5 * o.dpr + px); g.textAlign = "center";
-    });
+  // ---- drawing --------------------------------------------------------------------------------------
+  function seatedPose(r, ag, cheering) {
+    const s = r.state;
+    return s === "working" ? "work" : s === "idle" ? "idle" : s === "completed" ? (cheering ? "cheer" : "idle") : s === "blocked" ? "blocked" : s === "error" ? "error" : "off";
   }
 
   function render() {
-    if (!o.cw) return;
-    const { L, S, ox, oy, mw, mh } = geometry();
-    const lay = layers[o.layout] || (layers[o.layout] = buildLayers(L));
-    const { snap, nowSec, reduced } = getData();
-    const f = o.animate && !reduced ? o.tick : 0;
-    mapCv.width = L.w; mapCv.height = L.h;
-    mg.drawImage(lay.bg, 0, 0);
-    const parts = [];
+    if (!o.cw || !o.layout) return;
+    applyGeometry();
+    const L = LAYOUTS[o.layout], { snap, nowSec, reduced } = getData();
+    const f = o.animate && !reduced ? scene.frame : 0;
+    const bg = bgs[o.layout] || (bgs[o.layout] = buildBackground(L));
+    g.drawImage(bg, 0, 0);
+    const items = [], bubbles = [];
     DESK_ORDER.forEach((id, i) => {
-      const a = BY_ID[id], gm = cellGeom(L, i), r = resolveAgent(a, snap, nowSec);
-      const cheer = r.state === "completed" && r.ageSec <= CELEBRATE_S;
-      if (r.state === "standby") drawChair(mg, gm.px, gm.py, true);
-      else {
-        const pose = r.state === "working" ? "work" : r.state === "idle" ? "idle" : r.state === "completed" ? (cheer ? "cheer" : "idle")
-          : r.state === "blocked" ? "blocked" : r.state === "error" ? "error" : "off";
-        drawPerson(mg, gm.px, gm.py, a.look, pose, f, r.state === "completed");
+      const a = BY_ID[id], gm = cellGeom(L, i), r = resolveAgent(a, snap, nowSec), ag = scene.agent(id), af = f + ag.phase;
+      const deskKey = gm.dy + 9, persona = PERSONA[id] || DEFAULT_PERSONA;
+      const cheering = (r.state === "completed" && (ag.cheerUntil > scene.t)) && !reduced;
+      if (r.state === "standby") items.push({ k: deskKey - 0.5, d: () => drawChair(g, gm.px, gm.py, true) });
+      else if (ag.mode === "seated") {
+        const m = ag.micro, opts = { look: m && m.look, think: m && m.name === "think", sip: m && m.name === "sip", yawn: m && m.name === "yawn", shake: m && m.name === "shake", typing: persona.typing };
+        items.push({ k: deskKey - 0.5, d: () => drawPerson(g, gm.px, gm.py, a.look, seatedPose(r, ag, cheering), r.state === "unknown" ? 0 : af, r.state === "completed", opts) });
+      } else items.push({ k: deskKey - 0.5, d: () => drawChair(g, gm.px + 1, gm.py + 2, false) });      // empty chair while away
+      items.push({ k: deskKey, d: () => { drawDesk(g, gm.dx, gm.dy); drawMonitor(g, gm.dx + 1, gm.dy - 9, r.state, r.state === "unknown" || r.state === "standby" ? 0 : af); } });
+      if (ag.mode !== "seated" && r.state !== "standby") {
+        const step = ag.step || {}, walking = ag.mode === "walking" && ag.pauseLeft <= 0;
+        if (step.sit && ag.mode === "doing") items.push({ k: ag.y, d: () => drawPerson(g, Math.round(ag.x) - 7, Math.round(ag.y) - 18, a.look, "idle", af, false, { noChair: true, typing: 2 }) });
+        else {
+          const pose = ag.mode === "walking" ? "swing" : step.pose === "cheer" ? "up" : step.pose === "look" || step.pose === "talk" ? "down" : (step.pose || "down");
+          items.push({ k: ag.y + 0.2, d: () => drawStanding(g, ag.x, ag.y, a.look, { dir: ag.dir, frame: walking ? Math.floor(ag.wf) : af >> 1, walk: walking, arms: pose, talk: step.pose === "talk" }) });
+        }
+        if (step.talk && ag.mode === "doing" && Math.floor(scene.t * 1.4 + ag.phase) % 3 === 0) bubbles.push(() => drawBubble(g, Math.round(ag.x) + 5, Math.round(ag.y) - 34, ".", "#334155"));
+        if (step.pose === "cheer" && ag.mode === "doing" && !reduced) bubbles.push(() => drawConfetti(g, Math.round(ag.x), Math.round(ag.y) - 20, af));
+      } else if (ag.mode === "seated") {
+        if (cheering) bubbles.push(() => drawConfetti(g, gm.px + 7, gm.py, af));
+        const glyph = r.state === "unknown" ? ["?", "#475569"] : r.state === "blocked" ? ["!", "#d97706"] : r.state === "error" ? ["x", "#dc2626"] : r.state === "completed" && !cheering ? ["v", "#16a34a"] : null;
+        if (glyph) bubbles.push(() => drawBubble(g, gm.px + 15, gm.py + 1 - (af % 8 < 4 ? 0 : 1), glyph[0], glyph[1]));
       }
-      parts.push(() => {
-        drawMonitor(mg, gm.dx + 1, gm.dy - 9, r.state, f);
-        if (cheer && !reduced) drawConfetti(mg, gm.px + 7, gm.py, f);
-        const glyph = r.state === "unknown" ? ["?", "#475569"] : r.state === "blocked" ? ["!", "#d97706"] : r.state === "error" ? ["x", "#dc2626"]
-          : r.state === "completed" && !cheer ? ["v", "#16a34a"] : null;
-        if (glyph) drawBubble(mg, gm.px + 15, gm.py + 1 - (f % 8 < 4 ? 0 : 1), glyph[0], glyph[1]);
-      });
     });
-    mg.drawImage(lay.front, 0, 0);
-    parts.forEach((p) => p());
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#0b1220"; ctx.fillRect(0, 0, o.cw, o.ch);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(mapCv, ox, oy, mw, mh);
-    text(ctx, S, ox, oy, L);
+    items.sort((p, q) => p.k - q.k).forEach((it) => it.d());
+    bubbles.forEach((b) => b());
     canvas.dataset.frames = String(Number(canvas.dataset.frames) + 1);
     canvas.dataset.zoom = String(view.zoom);
+    scene.clean();
+  }
+
+  /** Mirror of the scene for accessibility / tests (written only when something changed). */
+  function describe() {
+    const out = {};
+    for (const id of DESK_ORDER) { const ag = scene.agent(id); out[id] = { mode: ag.mode, x: Math.round(ag.x), y: Math.round(ag.y), plan: ag.planKind || "", pose: (ag.step && ag.step.pose) || "" }; }
+    return out;
   }
 
   return {
-    render, resize,
-    step() { o.tick++; render(); },
+    render, resize, updatePlates, describe, scene,
+    update(dt) { scene.update(dt, getData()); if (scene.dirty) render(); },
+    busy: () => scene.busy(),
+    onData() { const d = getData(); scene.sync(d.snap, d.nowSec); scene.update(0, d); updatePlates(); render(); },
     setAnimate(v) { o.animate = v; },
     zoomBy(delta, fx, fy) {
-      const g0 = geometry();
-      const next = Math.max(0, Math.min(MAX_ZOOM, view.zoom + delta));
+      const g0 = geometry(), next = Math.max(0, Math.min(MAX_ZOOM, view.zoom + delta));
       if (next === view.zoom) return;
       const mx = (fx - g0.ox) / g0.S, my = (fy - g0.oy) / g0.S;
       view.zoom = next;
@@ -201,13 +157,10 @@ export function createOffice(canvas, getData) {
       view.ox = fx - mx * g1.S; view.oy = fy - my * g1.S;
       render();
     },
-    panBy(dx, dy) {
-      const g = geometry();
-      view.ox = g.ox + dx; view.oy = g.oy + dy;
-      render();
-    },
+    panBy(dx, dy) { const g0 = geometry(); view.ox = g0.ox + dx; view.oy = g0.oy + dy; render(); },
     resetView() { view.zoom = 0; view.ox = 0; view.oy = 0; render(); },
     get dpr() { return o.dpr; },
     get size() { return { w: o.cw, h: o.ch }; },
   };
 }
+void rect; void CELEBRATE_S;
