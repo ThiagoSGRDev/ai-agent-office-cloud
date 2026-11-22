@@ -17,8 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "timeout": 20,
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStart || true"
+            "timeout": 40,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStart --publish || true"
           }
         ]
       }
@@ -30,6 +30,16 @@
             "type": "command",
             "timeout": 20,
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" PreToolUse || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope_guard.py\" --only lucas,sofia"
           }
         ]
       }
