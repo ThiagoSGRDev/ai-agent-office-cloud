@@ -14,14 +14,14 @@ export const KNOWN_STATES = ["idle", "working", "completed", "blocked", "error"]
 
 // Desk order (row-major). `active` = has a real configured agent in .claude/agents/.
 export const AGENTS = [
-  { id: "alex",   name: "Alex",   role: "PM",         active: true,  look: { skin: "#f1c27d", hair: "#2b2118", shirt: "#3b82f6", accent: "#e5e7eb", extra: "glasses" } },
-  { id: "lucas",  name: "Lucas",  role: "Full Stack", active: true,  look: { skin: "#d9a066", hair: "#6b3f1d", shirt: "#16a34a", accent: "#bbf7d0", extra: "headphones" } },
-  { id: "sofia",  name: "Sofia",  role: "QA",         active: true,  look: { skin: "#f5d0b0", hair: "#b91c1c", shirt: "#9333ea", accent: "#f3e8ff", extra: "ponytail" } },
-  { id: "arthur", name: "Arthur", role: "Arquiteto",  active: false, look: { skin: "#e0ac69", hair: "#9ca3af", shirt: "#0f766e", accent: "#ccfbf1", extra: "none" } },
-  { id: "noah",   name: "Noah",   role: "Segurança",  active: false, look: { skin: "#8d5524", hair: "#111827", shirt: "#374151", accent: "#fca5a5", extra: "none" } },
-  { id: "maya",   name: "Maya",   role: "UI/UX",      active: false, look: { skin: "#f1c27d", hair: "#7c3aed", shirt: "#ec4899", accent: "#fce7f3", extra: "ponytail" } },
-  { id: "ethan",  name: "Ethan",  role: "DevOps",     active: false, look: { skin: "#c68642", hair: "#451a03", shirt: "#ea580c", accent: "#ffedd5", extra: "headphones" } },
-  { id: "olivia", name: "Olivia", role: "Pesquisa",   active: false, look: { skin: "#ffdbac", hair: "#fbbf24", shirt: "#0284c7", accent: "#e0f2fe", extra: "glasses" } },
+  { id: "alex",   name: "Alex",   role: "PM",         active: true },
+  { id: "lucas",  name: "Lucas",  role: "Full Stack", active: true },
+  { id: "sofia",  name: "Sofia",  role: "QA",         active: true },
+  { id: "arthur", name: "Arthur", role: "Arquiteto",  active: false },
+  { id: "noah",   name: "Noah",   role: "Segurança",  active: false },
+  { id: "maya",   name: "Maya",   role: "UI/UX",      active: false },
+  { id: "ethan",  name: "Ethan",  role: "DevOps",     active: false },
+  { id: "olivia", name: "Olivia", role: "Pesquisa",   active: false },
 ];
 
 export const STATE_STYLE = {

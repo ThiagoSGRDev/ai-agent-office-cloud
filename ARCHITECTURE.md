@@ -68,10 +68,20 @@ O que é **verdade** (estado e idade) vem só de `state.js` e aparece nas placas
 - **Trajetos:** grafo de pontos por layout (corredores entre as mesas, sem atravessar móveis ou placas) com menor caminho. Quem sai da mesa passa por trás dela.
 - **Movimento reduzido / Pausar / aba oculta:** ninguém se desloca; todos ficam na mesa.
 
-## Renderização e consumo
+## Renderização, nitidez e consumo
 
-- O mapa é um canvas **pequeno** (176×320 em pé, 352×176 deitado) ampliado por CSS (`image-rendering: pixelated`, escala inteira); as placas são DOM, atualizadas só quando o dado muda.
+- O mapa é um canvas **pequeno** (176×320 em pé, 352×176 deitado) ampliado por CSS (`image-rendering: pixelated`, **escala inteira em pixels de tela**); as placas são DOM, atualizadas só quando o dado muda.
+- **Alinhamento de pixels inteiros:** os deslocamentos do mapa (centralização, zoom e arrasto) são arredondados a pixels de tela inteiros, e todos os sprites são desenhados em coordenadas inteiras. Um deslocamento de meio pixel faria o compositor reamostrar (borrar) o canvas. Não há `will-change` no mapa.
+- **Teste de nitidez** (`N1` em `tests/run.mjs`): captura a página real em 6 densidades de tela (1×, 1,25×, 1,5×, 2×, 2,75×, 3×, com tamanhos ímpares), ajustada, com zoom e com arrasto fracionário, e mede **pixels isolados** (cor diferente dos dois vizinhos). Com escala inteira o resultado é ~0%; com interpolação ligada sobe para 12–18%. O teste reprova acima de 1%.
 - Laço: ~12 quadros/s **somente enquanto algo se move ou digita**; caso contrário, um tick de 4 Hz sem repintar. Gestos estáticos repintam só ao começar e ao terminar.
+
+## Personagens (`docs/js/characters.js`)
+
+Estilo "gente de bloco": cabeça grande e arredondada, corpo compacto, mãos de luva, rosto simples (olhos 2×3 com brilho, sorriso de 4 px, óculos com lente branca e pupila) e contorno na cor de cada peça. Cada agente tem cabelo, roupa e acessório próprios (Alex: terno e óculos prateados; Arthur: colete e bigode; Lucas: moletom e fones; Sofia: blazer e crachá; Noah: touca e colete; Maya: boina e cachecol; Ethan: boné e óculos ciano; Olivia: coque redondo com fita e cardigã).
+
+- Tudo é desenhado por código (sem imagens externas, sem licenças). Caixa de 16×26 px, pés na última linha.
+- **Regra do rosto:** nenhum cabelo, touca ou boné toca as linhas dos olhos; o rosto só espelha o **estado real** (focado, feliz, preocupado, cinza) e nunca inventa um.
+- Poses: sentado (digitando, ocioso, comemorando, bloqueado, desconhecido), em pé de frente/lado/costas, caminhada de 4 quadros, e gestos (olhar, pensar, tomar café, bocejar, negar, regar, apontar, entregar relatório).
 
 ## Publicação sem bloquear a sessão (`office_hook.py`)
 

@@ -2,7 +2,8 @@
 // with CSS (image-rendering: pixelated); nameplates are DOM elements (crisp text, updated only when needed).
 import { AGENTS, CELEBRATE_S, STATE_STYLE, PERSONA, DEFAULT_PERSONA } from "./config.js";
 import { resolveAgent, formatAge } from "./state.js";
-import { rect, drawPerson, drawStanding, drawChair, drawDesk, drawMonitor, drawBubble, drawConfetti } from "./sprites.js";
+import { drawChair, drawDesk, drawMonitor, drawBubble, drawConfetti } from "./sprites.js";
+import { drawSeated, seatedHands, drawStandingChar, drawSitting } from "./characters.js";
 import { LAYOUTS, DESK_ORDER, cellGeom, buildBackground } from "./layout.js";
 import { createScene } from "./scene.js";
 
@@ -32,8 +33,9 @@ export function createOffice(stage, world, canvas, labels, getData) {
     const L = LAYOUTS[o.layout];
     const fit = Math.max(1, Math.floor(Math.min(o.cw / L.w, o.ch / L.h)));
     const S = fit + view.zoom, mw = L.w * S, mh = L.h * S;
-    const ox = mw <= o.cw ? (o.cw - mw) / 2 : Math.min(0, Math.max(o.cw - mw, view.ox));
-    const oy = mh <= o.ch ? (o.ch - mh) / 2 : Math.min(0, Math.max(o.ch - mh, view.oy));
+    // integer DEVICE-pixel offsets: a half-pixel translate would make the compositor resample (blur) the canvas
+    const ox = Math.round(mw <= o.cw ? (o.cw - mw) / 2 : Math.min(0, Math.max(o.cw - mw, view.ox)));
+    const oy = Math.round(mh <= o.ch ? (o.ch - mh) / 2 : Math.min(0, Math.max(o.ch - mh, view.oy)));
     return { L, S, fit, ox, oy, mw, mh, k: S / o.dpr };
   }
 
@@ -90,9 +92,15 @@ export function createOffice(stage, world, canvas, labels, getData) {
   }
 
   // ---- drawing --------------------------------------------------------------------------------------
-  function seatedPose(r, ag, cheering) {
-    const s = r.state;
-    return s === "working" ? "work" : s === "idle" ? "idle" : s === "completed" ? (cheering ? "cheer" : "idle") : s === "blocked" ? "blocked" : s === "error" ? "error" : "off";
+  /** Evidence -> seated pose + face. The face only mirrors the real state (never invents one). */
+  function seatedLook(r, cheering) {
+    const st = r.state;
+    if (st === "unknown") return { pose: "sit", expr: "off", off: true };
+    if (st === "working") return { pose: "sit", expr: "focus" };
+    if (st === "blocked") return { pose: "blocked", expr: "worried" };
+    if (st === "error") return { pose: "sit", expr: "worried" };
+    if (st === "completed") return cheering ? { pose: "cheer", expr: "happy" } : { pose: "sit", expr: "smile" };
+    return { pose: "sit", expr: "smile" };                                         // idle
   }
 
   function render() {
@@ -109,23 +117,24 @@ export function createOffice(stage, world, canvas, labels, getData) {
       const cheering = (r.state === "completed" && (ag.cheerUntil > scene.t)) && !reduced;
       if (r.state === "standby") items.push({ k: deskKey - 0.5, d: () => drawChair(g, gm.px, gm.py, true) });
       else if (ag.mode === "seated") {
-        const m = ag.micro, opts = { look: m && m.look, think: m && m.name === "think", sip: m && m.name === "sip", yawn: m && m.name === "yawn", shake: m && m.name === "shake", typing: persona.typing };
-        items.push({ k: deskKey - 0.5, d: () => drawPerson(g, gm.px, gm.py, a.look, seatedPose(r, ag, cheering), r.state === "unknown" ? 0 : af, r.state === "completed", opts) });
+        const m = ag.micro, lk = seatedLook(r, cheering);
+        const opts = { ...lk, frame: r.state === "unknown" ? 0 : af, typing: persona.typing, look: m && m.look, think: m && m.name === "think", sip: m && m.name === "sip", yawn: m && m.name === "yawn", shake: m && m.name === "shake" };
+        items.push({ k: deskKey - 0.5, d: () => drawSeated(g, id, gm.dx, gm.dy, opts) });
       } else items.push({ k: deskKey - 0.5, d: () => drawChair(g, gm.px + 1, gm.py + 2, false) });      // empty chair while away
-      items.push({ k: deskKey, d: () => { drawDesk(g, gm.dx, gm.dy); drawMonitor(g, gm.dx + 1, gm.dy - 9, r.state, r.state === "unknown" || r.state === "standby" ? 0 : af); } });
+      items.push({ k: deskKey, d: () => { drawDesk(g, gm.dx, gm.dy); drawMonitor(g, gm.dx + 1, gm.dy - 9, r.state, r.state === "unknown" || r.state === "standby" ? 0 : af); if (r.state !== "standby" && ag.mode === "seated") seatedHands(g, id, gm.dx, gm.dy, { pose: r.state === "working" ? "work" : cheering || r.state === "blocked" ? "cheer" : "idle", frame: af, typing: persona.typing, off: r.state === "unknown" }); } });
       if (ag.mode !== "seated" && r.state !== "standby") {
         const step = ag.step || {}, walking = ag.mode === "walking" && ag.pauseLeft <= 0;
-        if (step.sit && ag.mode === "doing") items.push({ k: ag.y, d: () => drawPerson(g, Math.round(ag.x) - 7, Math.round(ag.y) - 18, a.look, "idle", af, false, { noChair: true, typing: 2 }) });
+        if (step.sit && ag.mode === "doing") items.push({ k: ag.y, d: () => drawSitting(g, id, ag.x, ag.y, { frame: af }) });
         else {
-          const pose = ag.mode === "walking" ? "swing" : step.pose === "cheer" ? "up" : step.pose === "look" || step.pose === "talk" ? "down" : (step.pose || "down");
-          items.push({ k: ag.y + 0.2, d: () => drawStanding(g, ag.x, ag.y, a.look, { dir: ag.dir, frame: walking ? Math.floor(ag.wf) : af >> 1, walk: walking, arms: pose, talk: step.pose === "talk" }) });
+          const arms = ag.mode === "walking" ? "swing" : step.pose === "cheer" || step.pose === "up" ? "up" : step.pose === "look" || step.pose === "talk" || !step.pose ? "down" : step.pose;
+          items.push({ k: ag.y + 0.2, d: () => drawStandingChar(g, id, ag.x, ag.y, { dir: ag.dir, frame: walking ? Math.floor(ag.wf) : af >> 1, walk: walking, arms, talk: step.pose === "talk" }) });
         }
-        if (step.talk && ag.mode === "doing" && Math.floor(scene.t * 1.4 + ag.phase) % 3 === 0) bubbles.push(() => drawBubble(g, Math.round(ag.x) + 5, Math.round(ag.y) - 34, ".", "#334155"));
-        if (step.pose === "cheer" && ag.mode === "doing" && !reduced) bubbles.push(() => drawConfetti(g, Math.round(ag.x), Math.round(ag.y) - 20, af));
+        if (step.talk && ag.mode === "doing" && Math.floor(scene.t * 1.4 + ag.phase) % 3 === 0) bubbles.push(() => drawBubble(g, Math.round(ag.x) + 6, Math.round(ag.y) - 37, ".", "#334155"));
+        if (step.pose === "cheer" && ag.mode === "doing" && !reduced) bubbles.push(() => drawConfetti(g, Math.round(ag.x), Math.round(ag.y) - 23, af));
       } else if (ag.mode === "seated") {
-        if (cheering) bubbles.push(() => drawConfetti(g, gm.px + 7, gm.py, af));
+        if (cheering) bubbles.push(() => drawConfetti(g, gm.dx + 16, gm.dy - 18, af));
         const glyph = r.state === "unknown" ? ["?", "#475569"] : r.state === "blocked" ? ["!", "#d97706"] : r.state === "error" ? ["x", "#dc2626"] : r.state === "completed" && !cheering ? ["v", "#16a34a"] : null;
-        if (glyph) bubbles.push(() => drawBubble(g, gm.px + 15, gm.py + 1 - (af % 8 < 4 ? 0 : 1), glyph[0], glyph[1]));
+        if (glyph) bubbles.push(() => drawBubble(g, gm.dx + 24, gm.dy - 21 - (af % 8 < 4 ? 0 : 1), glyph[0], glyph[1]));
       }
     });
     items.sort((p, q) => p.k - q.k).forEach((it) => it.d());
@@ -163,4 +172,4 @@ export function createOffice(stage, world, canvas, labels, getData) {
     get size() { return { w: o.cw, h: o.ch }; },
   };
 }
-void rect; void CELEBRATE_S;
+void CELEBRATE_S;

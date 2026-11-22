@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DOCS = path.join(ROOT, "docs");
+const DOCS = process.env.AAO_DOCS || path.join(ROOT, "docs");   // AAO_DOCS lets the negative control run against a modified copy
 const DATA = "https://raw.githubusercontent.com/ThiagoSGRDev/ai-agent-office-cloud/data/status.json";
 const SHOTS = process.env.SHOT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), "aao-shots-"));
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
@@ -269,6 +269,41 @@ await scenario("W10 carga: ocioso (passeios + gestos) repinta bem menos que trab
   console.log(`   [medição] ocioso: ${fps.toFixed(2)} quadros/s em média (trabalhando: ~12)`);
   check(`${name}: média <= 6 quadros/s`, fps <= 6, fps.toFixed(2));
 });
+
+// ---- pixel sharpness: nearest-neighbour scaling only (no interpolation) ------------------------------------------
+// With integer scaling every map pixel becomes a block of >= 2 device pixels, so a pixel whose colour differs from BOTH
+// horizontal (or vertical) neighbours can only come from resampling/blur.
+async function isolatedRatio(page, buf) {
+  return page.evaluate(async (b64) => {
+    const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const bmp = await createImageBitmap(new Blob([u8], { type: "image/png" })); const W = bmp.width, H = bmp.height;
+    const c = new OffscreenCanvas(W, H), g = c.getContext("2d"); g.drawImage(bmp, 0, 0); const d = g.getImageData(0, 0, W, H).data;
+    const same = (i, j) => d[i] === d[j] && d[i + 1] === d[j + 1] && d[i + 2] === d[j + 2];
+    let h = 0, v = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = (y * W + x) * 4; n++; if (!same(i, i - 4) && !same(i, i + 4)) h++; if (!same(i, i - W * 4) && !same(i, i + W * 4)) v++; }
+    return { h: (100 * h) / n, v: (100 * v) / n, w: W, hgt: H };
+  }, buf.toString("base64"));
+}
+for (const [label, ctx] of [
+  ["1281x721 dpr1", { viewport: { width: 1281, height: 721 }, deviceScaleFactor: 1 }],
+  ["1367x769 dpr1.25", { viewport: { width: 1367, height: 769 }, deviceScaleFactor: 1.25 }],
+  ["1281x721 dpr1.5", { viewport: { width: 1281, height: 721 }, deviceScaleFactor: 1.5 }],
+  ["1280x720 dpr2", { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 }],
+  ["celular 391x845 dpr2.75", { viewport: { width: 391, height: 845 }, deviceScaleFactor: 2.75, isMobile: true, hasTouch: true }],
+  ["celular 390x844 dpr3", { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }],
+]) {
+  await scenario(`N1 nitidez ${label}`, { body: fresh, ctx }, async ({ page, name }) => {
+    await page.evaluate(() => { document.getElementById("labels").style.display = "none"; });         // text is DOM; only the pixel map is measured
+    const worst = { h: 0, v: 0 };
+    const measure = async () => { const r = await isolatedRatio(page, await page.locator("#stage").screenshot({ type: "png" })); worst.h = Math.max(worst.h, r.h); worst.v = Math.max(worst.v, r.v); };
+    await page.waitForTimeout(300); await measure();                                                       // fitted
+    await page.click("#btn-zoom-in"); await page.waitForTimeout(250); await measure();                    // zoomed
+    const bb = await page.locator("#stage").boundingBox();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.mouse.down(); await page.mouse.move(bb.x + bb.width / 2 + 7.3, bb.y + bb.height / 2 + 3.7, { steps: 3 }); await page.mouse.up();
+    await page.waitForTimeout(250); await measure();                                                       // zoomed + dragged by a fractional distance
+    check(`${name}: sem interpolação (pixels isolados H<=1% e V<=1%)`, worst.h <= 1 && worst.v <= 1, `H ${worst.h.toFixed(2)}% V ${worst.v.toFixed(2)}%`);
+  });
+}
 
 server.close();
 await browser.close();

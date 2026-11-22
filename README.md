@@ -37,7 +37,7 @@ Escritório virtual 2D em pixel art em que os personagens representam agentes **
 ## Testes
 
 ```bash
-node tests/run.mjs      # frontend, estados obsoletos, movimento vs. evidência, mobile/desktop, segredos (Playwright; ~6 min)
+node tests/run.mjs      # frontend, estados obsoletos, movimento vs. evidência, nitidez de pixels, mobile/desktop, segredos (Playwright; ~8 min)
 ONLY=W4,W10 node tests/run.mjs   # roda só os cenários cujo nome começa com W4 ou W10
 bash tests/hook_test.sh # hook: sanitização, limite de frequência, falhas e recuperação
 ```
@@ -50,4 +50,5 @@ bash tests/hook_test.sh # hook: sanitização, limite de frequência, falhas e r
 - **Movimento é ilustrativo:** passeios e gestos não indicam atividade real. Só "ocioso" passeia, e a placa continua mostrando o dado real. Não há animação de "pesquisando" ou "consultando documentos": falta evidência confiável.
 - **Estados ainda não ligados a eventos reais:** erro (existe o visual, mas nenhum evento verificado o aciona), pesquisando, testando, analisando e colaborando. `Notification` (bloqueado) ainda não foi observado numa sessão real.
 - **Cota:** cada sessão consome da mesma cota do Claude Pro; o piso observado foi ~78 mil tokens de contexto por sessão. O consumo em % da cota não foi medido.
+- **Nitidez:** testada com Chromium (6 densidades de tela). Safari e Firefox em GPU real não foram testados; o CSS usa `image-rendering: crisp-edges` com `pixelated` como preferência.
 - **Relógio:** a idade dos dados usa o relógio do dispositivo; um relógio errado torna os estados desconhecidos.
