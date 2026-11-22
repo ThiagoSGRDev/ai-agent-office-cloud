@@ -306,6 +306,43 @@ newenv; mkdir -p status; printf '%s' '[]' > status/status.json
 h Stop '{"agent_type":"alex"}' --publish
 ok "C18 recuperação seguida de publicação: remoto recebe snapshot válido e só a lista permitida" "$(git -C "$O" show data:status.json | python3 -c "import json,sys;d=json.load(sys.stdin);assert set(d)=={'schema','generated_at','agents'} and d['agents']['alex']['state']=='idle' and all(set(v)=={'state','updated_at','last_event'} for v in d['agents'].values())" 2>/dev/null; echo $?)"
 
+# H: Alex (main session) stuck in working is expired after 900 s; subagent rules unchanged
+TRIG='{"agent_type":"lucas","agent_id":"Z1"}'          # ignored event (unregistered subagent): only triggers the sweeper
+newenv
+h PreToolUse '{"agent_type":"alex"}'; agestate alex 901; h SubagentStop "$TRIG"
+ok "H1 Alex working há 901 s volta a idle com last_event Stop" "$([ "$(st alex)" = idle ] && [ "$(le alex)" = Stop ]; echo $?)"
+newenv
+h PreToolUse '{"agent_type":"alex"}'; agestate alex 899; h SubagentStop "$TRIG"
+ok "H2 Alex working há 899 s continua working" "$([ "$(st alex)" = working ]; echo $?)"
+newenv
+h PreToolUse '{"agent_type":"alex"}'; agestate alex 900; h SubagentStop "$TRIG"
+ok "H2b Alex working há exatamente 900 s continua working (limite é > 900)" "$([ "$(st alex)" = working ]; echo $?)"
+newenv
+h PreToolUse '{"agent_type":"alex"}'; agestate alex 901; h PreToolUse '{"agent_type":"alex"}'
+ok "H3 Alex working há 901 s + novo PreToolUse: working com updated_at recente" "$([ "$(st alex)" = working ] && python3 -c "import json,time;d=json.load(open('status/status.json'))['agents']['alex'];assert d['updated_at']>=time.time()-5" 2>/dev/null; echo $?)"
+newenv
+h SubagentStart '{"agent_type":"lucas","agent_id":"L1"}'; rm -f status/subagents.json; agestate lucas 901; h SubagentStop '{"agent_type":"sofia","agent_id":"Z1"}'
+ok "H5 subagente working há 901 s sem registro vivo continua working (limite de 30 min)" "$([ "$(st lucas)" = working ]; echo $?)"
+agestate lucas 900; h SubagentStop '{"agent_type":"sofia","agent_id":"Z1"}'
+ok "H5b ... com 1801 s no total e sem registro vivo vira idle" "$([ "$(st lucas)" = idle ]; echo $?)"
+newenv
+h SubagentStart '{"agent_type":"lucas","agent_id":"L1"}'; agestate lucas 1801; h SubagentStop '{"agent_type":"sofia","agent_id":"Z1"}'
+ok "H5c subagente com registro vivo continua working mesmo com updated_at de 1801 s" "$([ "$(st lucas)" = working ] && [ "$(regid active L1)" = True ]; echo $?)"
+for variant in string absent; do
+  newenv; h PreToolUse '{"agent_type":"alex"}'
+  python3 - "$variant" <<'PYEOF'
+import json, sys
+p = "status/status.json"; d = json.load(open(p))
+if sys.argv[1] == "string": d["agents"]["alex"]["updated_at"] = "abc"
+else: del d["agents"]["alex"]["updated_at"]
+json.dump(d, open(p, "w"))
+PYEOF
+  h SubagentStop "$TRIG"; rc=$?
+  ok "H6 updated_at ($variant) no Alex: hook sai com 0 e sem stdout" "$rc"
+  ok "H6 updated_at ($variant): status.json continua JSON válido" "$(python3 -c "import json;json.load(open('status/status.json'))" 2>/dev/null; echo $?)"
+done
+
 # C13: public state file keeps the exact schema after all of the above
+newenv; h Stop '{"agent_type":"alex"}'      # fresh env: the H6 env above holds deliberately malformed entries
 ok "C13 status.json local: schema/generated_at/agents e campos por agente inalterados" "$(python3 -c "import json;d=json.load(open('status/status.json'));assert set(d)=={'schema','generated_at','agents'} and all(set(v)=={'state','updated_at','last_event'} for v in d['agents'].values())" 2>/dev/null; echo $?)"
 exit $FAIL
