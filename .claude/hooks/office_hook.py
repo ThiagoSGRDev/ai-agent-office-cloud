@@ -5,6 +5,9 @@ Records the state of each agent LOCALLY (status/, git-ignored) and, when called
 with --publish, publishes a SANITIZED snapshot to the `data` branch.
 
 Guarantees: never raises, never prints, ALWAYS exits 0, bounded run time.
+Final events (Stop, SubagentStop) are never rate limited: they mark status/.dirty and one publisher
+(status/.publish.lock) republishes the latest state while changes are pending. A hook that cannot take
+the lock returns at once; a failed or timed-out publish leaves .dirty for the next event.
 Published fields are an allowlist (schema, generated_at, agent name, state,
 updated_at, last_event). Nothing else from a hook payload is ever published.
 """
@@ -24,7 +27,10 @@ DIR = os.path.join(ROOT, "status")
 WT = os.path.join(DIR, ".data-wt")
 REMOTE = os.environ.get("AAO_PUBLISH_REMOTE", "origin")
 REF = "refs/aao/data"
-MIN_INTERVAL = 30          # seconds between publishes (Stop is always allowed)
+MIN_INTERVAL = 30          # seconds between publishes (FINAL events are exempt)
+FINAL = {"Stop", "SubagentStop"}   # final states are never rate limited or dropped
+PUB_LOCK = os.path.join(DIR, ".publish.lock")   # single publisher at a time
+DIRTY = os.path.join(DIR, ".dirty")             # local state not yet confirmed on the remote
 DEADLINE = 25              # total seconds allowed for git work
 MAIN_AGENT = "alex"
 KNOWN = {"alex", "arthur", "lucas", "sofia", "noah", "maya", "ethan", "olivia"}
@@ -107,46 +113,40 @@ def git(args, cwd=None):
 
 
 def publish(local):
+    """One publish attempt. True = nothing left to retry (published, unchanged or not applicable);
+    False = failed, the caller must keep the state marked as pending."""
     pub = public_snapshot(local)
     text = json.dumps(pub, indent=2, sort_keys=True) + "\n"
     if not SAFE.match(text):
         log("blocked: unsafe characters in snapshot")
-        return
+        return True
     stamp = os.path.join(DIR, ".last_publish")
-    if EVENT != "Stop":
-        try:
-            with open(stamp) as f:
-                if time.time() - float(f.read()) < MIN_INTERVAL:
-                    log("skipped: rate limit")
-                    return
-        except Exception:
-            pass
     if git(["rev-parse", "--git-dir"]).returncode:
         log("skipped: not a git repository")
-        return
+        return True
     git(["worktree", "prune"])
     f = git(["fetch", "--depth=1", REMOTE, "+data:" + REF])
     remote_has = f.returncode == 0
     if not remote_has and "couldn't find remote ref" not in f.stderr:
         log("fetch failed: " + f.stderr)
-        return
+        return False
     if not os.path.isdir(WT):
         r = (git(["worktree", "add", "--detach", WT, REF]) if remote_has
              else git(["worktree", "add", "--orphan", "-b", "aao-data", WT]))
         if r.returncode:
             log("worktree failed: " + r.stderr)
-            return
+            return False
     elif remote_has:
         r = git(["reset", "--hard", REF], cwd=WT)
         if r.returncode:
             log("reset failed: " + r.stderr)
-            return
+            return False
     try:
         with open(os.path.join(WT, "status.json")) as f:
             # only skip when the REMOTE already has this state (a failed earlier push must be retried)
             if remote_has and json.load(f).get("agents") == pub["agents"]:
                 log("skipped: unchanged")
-                return
+                return True
     except Exception:
         pass
     with open(os.path.join(WT, "status.json"), "w") as f:
@@ -154,23 +154,24 @@ def publish(local):
     r = git(["add", "status.json"], cwd=WT)
     if r.returncode:
         log("add failed: " + r.stderr)
-        return
+        return False
     if git(["diff", "--cached", "--quiet"], cwd=WT).returncode != 0:   # something new to commit
         r = git(["-c", "user.name=AI Agent Office", "-c", "user.email=noreply@users.noreply.github.com",
                  "commit", "-q", "-m", "status snapshot"], cwd=WT)
         if r.returncode:
             log("commit failed: " + (r.stderr or r.stdout))
-            return
+            return False
     r = git(["push", REMOTE, "HEAD:refs/heads/data"], cwd=WT)   # also retries an earlier failed push
     if r.returncode:
         log("push failed: " + r.stderr)
-        return
+        return False
     try:
         with open(stamp, "w") as f:
             f.write(str(time.time()))
     except Exception:
         pass
     log("published")
+    return True
 
 
 def read_payload(timeout=5.0):
@@ -194,11 +195,76 @@ def read_payload(timeout=5.0):
         return {}
 
 
+def mark_dirty():
+    with open(DIRTY, "a"):
+        pass
+    os.utime(DIRTY, None)
+
+
+def is_dirty():
+    return os.path.exists(DIRTY)
+
+
+def too_soon():
+    """Rate limit for non-final events only."""
+    try:
+        with open(os.path.join(DIR, ".last_publish")) as f:
+            return time.time() - float(f.read()) < MIN_INTERVAL
+    except Exception:
+        return False
+
+
+def drain():
+    """Holding the publisher lock: publish the latest local state while changes are pending.
+    Returns False when a publish failed (state stays pending for the next event)."""
+    while is_dirty():
+        if DEADLINE - (time.time() - START) <= 3:
+            log("pending: deadline reached, state kept for the next event")
+            return False
+        if EVENT not in FINAL and too_soon():
+            log("skipped: rate limit")
+            return False
+        try:
+            os.unlink(DIRTY)
+        except FileNotFoundError:
+            pass
+        ok = False
+        try:
+            with open(os.path.join(DIR, "status.json")) as f:
+                ok = publish(json.load(f))
+        except BaseException as e:
+            log("publish error: %s" % type(e).__name__)
+        if not ok:
+            mark_dirty()
+            return False
+    return True
+
+
+def flush():
+    """Single publisher. A hook that cannot take the lock returns at once: the holder sees the
+    .dirty marker it just set. The marker is re-checked after releasing the lock, so no change is lost."""
+    while True:
+        lk = open(PUB_LOCK, "a")
+        try:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                log("deferred: another publisher is running")
+                return
+            if not drain():
+                return
+        finally:
+            lk.close()                     # releases the lock
+        if not is_dirty():
+            return
+
+
 def main():
     payload = read_payload()
-    local = record(payload)
+    record(payload)
     if PUBLISH:
-        publish(local)
+        mark_dirty()
+        flush()
 
 
 if __name__ == "__main__":

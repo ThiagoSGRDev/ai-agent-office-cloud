@@ -21,7 +21,7 @@ ok "publica a branch data no primeiro SubagentStop" "$([ -n "$(pub)" ]; echo $?)
 ok "somente campos permitidos (schema/generated_at/agents)" "$(py 'assert set(d)=={"schema","generated_at","agents"} and all(set(v)=={"state","updated_at","last_event"} for v in d["agents"].values())' >/dev/null 2>&1; echo $?)"
 ok "nada sensível vazou" "$(pub | grep -qiE 'secret|hunter|ghp_|/root|SID123|prompt|transcript|cwd' ; [ $? -ne 0 ]; echo $?)"
 PAYLOAD='{"agent_type":"sofia"}' hook SubagentStart; PAYLOAD='{"agent_type":"sofia"}' hook SubagentStop --publish
-ok "limite de frequência pula o 2º SubagentStop" "$(tail -n1 status/publish.log | grep -q 'rate limit'; echo $?)"
+ok "SubagentStop não é mais limitado por frequência (estado final publicado)" "$(py 'assert d["agents"]["sofia"]["state"]=="completed"' >/dev/null 2>&1; echo $?)"
 PAYLOAD='{"agent_type":"sofia"}' hook SubagentStart
 PAYLOAD='{}' hook Stop --publish
 ok "Stop publica mesmo dentro do limite" "$(py 'assert d["agents"]["alex"]["state"]=="idle"' >/dev/null 2>&1; echo $?)"

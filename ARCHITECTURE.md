@@ -85,7 +85,7 @@ Estilo "gente de bloco": cabeça grande e arredondada, corpo compacto, mãos de 
 
 ## Publicação sem bloquear a sessão (`office_hook.py`)
 
-Sempre sai com código 0, nunca imprime, leitura de stdin com limite de 5 s, prazo de 25 s para o git, no máximo um push a cada 30 s (o `Stop` sempre publica), só publica se o estado mudou, e retoma sozinho após uma falha. Todos os comandos em `settings.json` terminam com `|| true`, para que até um script ausente (código de saída 2, que bloquearia o `Stop`) não possa bloquear a sessão.
+Sempre sai com código 0, nunca imprime, leitura de stdin com limite de 5 s, prazo de 25 s para o git, só publica se o estado mudou, e retoma sozinho após uma falha. Estados finais (`Stop` e `SubagentStop`) nunca são limitados por frequência nem descartados: o hook marca `status/.dirty` e um único publicador (`status/.publish.lock`, não bloqueante) republica o estado mais recente enquanto houver pendência; quem não obtém o lock sai na hora, e uma falha ou estouro de prazo deixa o `.dirty` para o próximo evento. Eventos não finais com `--publish` mantêm o limite de um push a cada 30 s. Todos os comandos em `settings.json` terminam com `|| true`, para que até um script ausente (código de saída 2, que bloquearia o `Stop`) não possa bloquear a sessão.
 
 ## Segurança
 
