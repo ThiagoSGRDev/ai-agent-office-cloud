@@ -8,10 +8,14 @@ Guarantees: never raises, never prints, ALWAYS exits 0, bounded run time.
 Final events (Stop, SubagentStop) are never rate limited: they mark status/.dirty and one publisher
 (status/.publish.lock) republishes the latest state while changes are pending. A hook that cannot take
 the lock returns at once; a failed or timed-out publish leaves .dirty for the next event.
+Classification: a SubagentStop completes an agent only when it matches a SubagentStart seen earlier
+(same agent_id and type, kept LOCALLY in status/subagents.json, expiring). SubagentStop claiming to be the
+main agent, with an empty type or no match is ignored and audited (events.jsonl: accepted/reason).
 Published fields are an allowlist (schema, generated_at, agent name, state,
 updated_at, last_event). Nothing else from a hook payload is ever published.
 """
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -37,6 +41,14 @@ KNOWN = {"alex", "arthur", "lucas", "sofia", "noah", "maya", "ethan", "olivia"}
 STATE = {"SessionStart": "idle", "SubagentStart": "working", "PreToolUse": "working",
          "SubagentStop": "completed", "Notification": "blocked", "Stop": "idle"}
 PUBLIC_STATES = {"idle", "working", "completed", "blocked"}
+ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")   # agent_id shape we accept (kept LOCAL, never published)
+ACTIVE_TTL = 1800          # s without activity before a subagent registration (and a stuck "working") expires
+EARLY_TTL = 120            # s window to pair a SubagentStop that arrived before its SubagentStart
+DONE_TTL = 120             # s a finished agent_id is remembered, so a duplicate/late SubagentStart cannot revive it
+SKEW_S = 60                # tolerated "future" timestamp: concurrent hooks read the clock at slightly different moments
+MAX_ACTIVE = 64           # max live registrations. Never evicted: when full, new SubagentStarts are ignored
+MAX_AUX = 64               # max entries in each auxiliary table ("early", "done"); oldest are dropped first
+REG = os.path.join(DIR, "subagents.json")      # LOCAL correlation table: agent_id -> type (status/ is git-ignored)
 SAFE = re.compile(r'^[A-Za-z0-9_{}\[\]":,.\s-]*$')   # final privacy guard on published text
 START = time.time()
 
@@ -51,25 +63,96 @@ def log(msg):
         pass
 
 
-def agent_of(payload):
-    a = payload.get("agent_type")
-    if isinstance(a, str):
-        a = a.lower()
-        return a if a in KNOWN else None      # built-in/unknown subagent types are ignored
-    return MAIN_AGENT                          # main session = Alex
+def load_registry(now):
+    """Local correlation tables (active / early / done). Corrupt or missing file -> empty; expired entries dropped."""
+    try:
+        with open(REG) as f:
+            raw = json.load(f)
+    except Exception:
+        raw = {}
+    reg = {"active": {}, "early": {}, "done": {}}
+    for table, key, ttl in (("active", "seen", ACTIVE_TTL), ("early", "ts", EARLY_TTL), ("done", "ts", DONE_TTL)):
+        src = raw.get(table) if isinstance(raw, dict) and isinstance(raw.get(table), dict) else {}
+        for aid, v in list(src.items())[:512]:
+            if (ID_RE.match(str(aid)) and isinstance(v, dict) and v.get("type") in KNOWN
+                    and isinstance(v.get(key), int) and -SKEW_S <= now - v[key] <= ttl):
+                reg[table][aid] = v
+    return reg
+
+
+def save_registry(reg):
+    # live registrations are never trimmed here (classify() refuses new ones when MAX_ACTIVE is reached);
+    # the auxiliary tables lose their OLDEST entries first
+    out = {"active": reg["active"]}
+    for table in ("early", "done"):
+        # timestamps have 1 s resolution: ties are broken by insertion order (later insertion = newer)
+        ranked = sorted(enumerate(reg[table].items()), key=lambda iv: (iv[1][1]["ts"], iv[0]), reverse=True)
+        out[table] = dict(kv for _, kv in sorted(ranked[:MAX_AUX]))
+    tmp = REG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(out, f)
+    os.replace(tmp, REG)
+
+
+def classify(payload, reg, now):
+    """-> (agent or None, state override or None, last_event, reason). agent None = event ignored for state.
+    Only a SubagentStop that matches a registered SubagentStart (same agent_id and type) may complete a
+    subagent. Anything claiming to be the main agent through SubagentStop is internal and ignored."""
+    at = payload.get("agent_type")
+    at = at.strip().lower() if isinstance(at, str) else ""
+    aid = payload.get("agent_id")
+    aid = aid if isinstance(aid, str) and ID_RE.match(aid) else None
+    if EVENT in ("SubagentStart", "SubagentStop"):
+        if not aid:
+            return None, None, EVENT, "no-agent-id"
+        if not at:
+            return None, None, EVENT, "empty-agent-type"
+        if at == MAIN_AGENT:
+            return None, None, EVENT, "main-agent-type"
+        if at not in KNOWN:
+            return None, None, EVENT, "unknown-agent-type"
+        done = reg["done"].get(aid)
+        done = done if done and done["type"] == at else None
+        if EVENT == "SubagentStart":
+            if done:                                      # duplicate/late start of a finished agent
+                return None, None, EVENT, "duplicate-start-after-stop"
+            early = reg["early"].pop(aid, None)
+            if early and early["type"] == at:             # its stop arrived first: already finished
+                reg["done"][aid] = {"type": at, "ts": now}
+                return at, "completed", "SubagentStop", "start-after-stop"
+            if len(reg["active"]) >= MAX_ACTIVE and aid not in reg["active"]:
+                return None, None, EVENT, "registry-full"  # never evict a live registration
+            reg["active"][aid] = {"type": at, "start": now, "seen": now}
+            return at, None, EVENT, "start-registered"
+        act = reg["active"].get(aid)
+        if act and act["type"] == at:
+            del reg["active"][aid]
+            reg["done"][aid] = {"type": at, "ts": now}
+            return at, None, EVENT, "stop-matched"
+        if done:                                          # duplicate stop of a finished agent
+            return None, None, EVENT, "duplicate-stop"
+        reg["early"][aid] = {"type": at, "ts": now}       # may pair with a late SubagentStart
+        return None, None, EVENT, "no-matching-start"
+    if aid:                                               # some other event inside a subagent context
+        if EVENT not in ("PreToolUse", "Notification"):
+            return None, None, EVENT, "unexpected-event-in-subagent-context"
+        act = reg["active"].get(aid)
+        if not act:
+            return None, None, EVENT, "uncorrelated-subagent-context"
+        act["seen"] = now
+        return act["type"], None, EVENT, "subagent-activity"
+    if at in ("", MAIN_AGENT):                            # no agent_id: the main session
+        return MAIN_AGENT, None, EVENT, "main-session"
+    return None, None, EVENT, "agent-type-without-id"
 
 
 def record(payload):
     os.makedirs(DIR, exist_ok=True)
-    now = int(time.time())
     raw = payload.get("agent_type")
-    agent = agent_of(payload)
+    aid_raw = payload.get("agent_id")
     with open(os.path.join(DIR, ".lock"), "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
-        with open(os.path.join(DIR, "events.jsonl"), "a") as f:
-            f.write(json.dumps({"ts": now, "event": EVENT, "agent": agent,
-                                "agent_type": raw if isinstance(raw, str) else None,
-                                "has_agent_id": "agent_id" in payload}) + "\n")
+        now = int(time.time())      # read AFTER taking the lock: a hook that waited must not use an older clock
         sp = os.path.join(DIR, "status.json")
         try:
             with open(sp) as f:
@@ -77,11 +160,34 @@ def record(payload):
         except Exception:
             st = {}
         agents = st.get("agents") if isinstance(st.get("agents"), dict) else {}
+        reg = load_registry(now)
+        # a subagent left "working" with no live registration and no news for ACTIVE_TTL (lost
+        # SubagentStop) goes back to idle instead of staying stuck; no completion is invented
+        live = {v["type"] for v in reg["active"].values()}
+        for name, a in agents.items():
+            if (name != MAIN_AGENT and isinstance(a, dict) and a.get("state") == "working"
+                    and isinstance(a.get("updated_at"), int) and now - a["updated_at"] > ACTIVE_TTL
+                    and name not in live):
+                a["state"], a["updated_at"] = "idle", now
+        agent, state, last_event, reason = classify(payload, reg, now)
         if agent and EVENT in STATE:
-            agents[agent] = {"state": STATE[EVENT], "updated_at": now, "last_event": EVENT}
+            agents[agent] = {"state": state or STATE[EVENT], "updated_at": now, "last_event": last_event}
+        else:
+            agent = None
+        try:
+            save_registry(reg)
+        except Exception:
+            pass
+        audit = {"ts": now, "event": EVENT, "agent": agent,
+                 "agent_type": raw if isinstance(raw, str) else None,
+                 "has_agent_id": "agent_id" in payload,
+                 "accepted": agent is not None, "reason": reason}
+        if isinstance(aid_raw, str) and aid_raw:       # local audit keeps only a short fingerprint
+            audit["agent_ref"] = hashlib.sha256(aid_raw.encode("utf-8", "replace")).hexdigest()[:8]
+        with open(os.path.join(DIR, "events.jsonl"), "a") as f:
+            f.write(json.dumps(audit) + "\n")
         # NOTE: "Stop" only ends the MAIN session's turn (Alex becomes idle via STATE). Subagents may
-        # still be running in the background, so their state is NOT touched here; if one never reports
-        # SubagentStop, the frontend expires its stale "working" claim by age.
+        # still be running in the background, so their state is NOT touched here.
         out = {"schema": 1, "generated_at": now, "agents": agents}
         tmp = sp + ".tmp"
         with open(tmp, "w") as f:
