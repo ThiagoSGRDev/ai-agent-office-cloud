@@ -6,9 +6,9 @@
       "updated_at": 1795359626
     },
     "lucas": {
-      "last_event": "SubagentStart",
-      "state": "working",
-      "updated_at": 1795359626
+      "last_event": "SubagentStop",
+      "state": "completed",
+      "updated_at": 1795359632
     },
     "sofia": {
       "last_event": "SubagentStop",
@@ -16,6 +16,6 @@
       "updated_at": 1795359611
     }
   },
-  "generated_at": 1795359626,
+  "generated_at": 1795359632,
   "schema": 1
 }
