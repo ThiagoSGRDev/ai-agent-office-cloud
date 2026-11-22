@@ -43,7 +43,8 @@ STATE = {"SessionStart": "idle", "SubagentStart": "working", "PreToolUse": "work
 PUBLIC_STATES = {"idle", "working", "completed", "blocked"}
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")   # agent_id shape we accept (kept LOCAL, never published)
 ACTIVE_TTL = 1800          # s without activity before a subagent registration (and a stuck "working") expires
-EARLY_TTL = 120            # s window to pair a SubagentStop that arrived before its SubagentStart
+MAIN_TTL = 900             # s a main-agent "working" may go without news before it expires to idle
+EARLY_TTL = 120           # s window to pair a SubagentStop that arrived before its SubagentStart
 DONE_TTL = 120             # s a finished agent_id is remembered, so a duplicate/late SubagentStart cannot revive it
 SKEW_S = 60                # tolerated "future" timestamp: concurrent hooks read the clock at slightly different moments
 MAX_ACTIVE = 64           # max live registrations. Never evicted: when full, new SubagentStarts are ignored
@@ -183,7 +184,13 @@ def record(payload):
         # a subagent left "working" with no live registration and no news for ACTIVE_TTL (lost
         # SubagentStop) goes back to idle instead of staying stuck; no completion is invented
         live = {v["type"] for v in reg["active"].values()}
+        expired = None
         for name, a in agents.items():
+            if (name == MAIN_AGENT and isinstance(a, dict) and a.get("state") == "working"
+                    and isinstance(a.get("updated_at"), int) and now - a["updated_at"] > MAIN_TTL):
+                a.update(state="idle", updated_at=now, last_event="Stop")
+                expired = "alex-main-ttl"
+                log("expired main agent working state")
             if (name != MAIN_AGENT and isinstance(a, dict) and a.get("state") == "working"
                     and isinstance(a.get("updated_at"), int) and now - a["updated_at"] > ACTIVE_TTL
                     and name not in live):
@@ -201,6 +208,8 @@ def record(payload):
                  "agent_type": raw if isinstance(raw, str) else None,
                  "has_agent_id": "agent_id" in payload,
                  "accepted": agent is not None, "reason": reason}
+        if expired:
+            audit["expired"] = expired
         if recovery:
             audit["recovery"] = recovery
             log("recovered status.json: " + recovery)

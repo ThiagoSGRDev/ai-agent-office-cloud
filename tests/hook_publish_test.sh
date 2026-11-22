@@ -121,6 +121,17 @@ sstart lucas; sstop lucas; c1=$(commits)
 PAYLOAD='{"agent_type":"Explore","agent_id":"x1"}' hook SubagentStop --publish; c2=$(commits)
 ok "T10 estado inalterado: sem novo commit e log 'unchanged'" "$([ "$c1" = "$c2" ] && [ "$c1" != 0 ] && last_log | grep -q unchanged; echo $?)"
 
+# H7: Alex stuck in working (901 s) is expired and published by a SessionStart --publish
+newenv
+PAYLOAD='{"agent_type":"alex"}' hook PreToolUse
+python3 - <<'PYEOF'
+import json
+p = "status/status.json"; d = json.load(open(p)); d["agents"]["alex"]["updated_at"] -= 901; json.dump(d, open(p, "w"))
+PYEOF
+PAYLOAD='{"agent_type":"lucas","agent_id":"Z9"}' hook SubagentStop --publish   # ignored event: only the sweeper changes Alex
+ok "H7 Alex working antigo (901 s) + evento ignorado com --publish: remoto mostra alex idle" "$([ "$(state alex)" = idle ]; echo $?)"
+ok "H7 .dirty ausente após a publicação" "$([ ! -e status/.dirty ]; echo $?)"
+
 # Bonus: non-final events keep the 30 s rate limit and leave .dirty for a later final event
 newenv
 sstart lucas; sstart sofia
