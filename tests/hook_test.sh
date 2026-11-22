@@ -16,21 +16,21 @@ py(){ python3 -c "import json,sys;d=json.load(sys.stdin);$1" <<<"$(pub)"; }
 
 PAYLOAD='{"cwd":"/secret/path","session_id":"SID123"}' hook SessionStart
 PAYLOAD='{"agent_type":"lucas","agent_id":"a1","prompt":"MY SECRET PROMPT"}' hook SubagentStart
-PAYLOAD='{"agent_type":"lucas","last_assistant_message":"password=hunter2 /root/x ghp_FAKE"}' hook SubagentStop --publish
+PAYLOAD='{"agent_type":"lucas","agent_id":"a1","last_assistant_message":"password=hunter2 /root/x ghp_FAKE"}' hook SubagentStop --publish
 ok "publica a branch data no primeiro SubagentStop" "$([ -n "$(pub)" ]; echo $?)"
 ok "somente campos permitidos (schema/generated_at/agents)" "$(py 'assert set(d)=={"schema","generated_at","agents"} and all(set(v)=={"state","updated_at","last_event"} for v in d["agents"].values())' >/dev/null 2>&1; echo $?)"
 ok "nada sensível vazou" "$(pub | grep -qiE 'secret|hunter|ghp_|/root|SID123|prompt|transcript|cwd' ; [ $? -ne 0 ]; echo $?)"
-PAYLOAD='{"agent_type":"sofia"}' hook SubagentStart; PAYLOAD='{"agent_type":"sofia"}' hook SubagentStop --publish
-ok "limite de frequência pula o 2º SubagentStop" "$(tail -n1 status/publish.log | grep -q 'rate limit'; echo $?)"
-PAYLOAD='{"agent_type":"sofia"}' hook SubagentStart
+PAYLOAD='{"agent_type":"sofia","agent_id":"s1"}' hook SubagentStart; PAYLOAD='{"agent_type":"sofia","agent_id":"s1"}' hook SubagentStop --publish
+ok "SubagentStop não é mais limitado por frequência (estado final publicado)" "$(py 'assert d["agents"]["sofia"]["state"]=="completed"' >/dev/null 2>&1; echo $?)"
+PAYLOAD='{"agent_type":"sofia","agent_id":"s2"}' hook SubagentStart
 PAYLOAD='{}' hook Stop --publish
 ok "Stop publica mesmo dentro do limite" "$(py 'assert d["agents"]["alex"]["state"]=="idle"' >/dev/null 2>&1; echo $?)"
 ok "Stop NÃO zera subagente ainda em execução (sofia continua working)" "$(py 'assert d["agents"]["sofia"]["state"]=="working"' >/dev/null 2>&1; echo $?)"
-ok "agentes desconhecidos (ex.: Explore) são ignorados" "$(PAYLOAD='{"agent_type":"Explore"}' hook SubagentStop --publish; python3 -c "import json;d=json.load(open('status/status.json'));assert 'explore' not in d['agents']" ; echo $?)"
+ok "agentes desconhecidos (ex.: Explore) são ignorados" "$(PAYLOAD='{"agent_type":"Explore","agent_id":"x1"}' hook SubagentStop --publish; python3 -c "import json;d=json.load(open('status/status.json'));assert 'explore' not in d['agents']" ; echo $?)"
 
 # divergence: someone else pushes to data first -> next publish still succeeds
 (cd "$S" && git clone -q -b data origin.git other 2>/dev/null && cd other && echo 1 > other.txt && git add . && $G commit -qm other && git push -q origin data) >/dev/null 2>&1
-rm -f status/.last_publish; PAYLOAD='{"agent_type":"lucas"}' hook SubagentStart; PAYLOAD='{}' hook Stop --publish
+rm -f status/.last_publish; PAYLOAD='{"agent_type":"lucas","agent_id":"a2"}' hook SubagentStart; PAYLOAD='{}' hook Stop --publish
 ok "recupera de divergência na branch data" "$(tail -n1 status/publish.log | grep -q published; echo $?)"
 
 # failure modes: always exit 0, never hang
@@ -38,7 +38,7 @@ fx(){ local t0=$(date +%s); printf '%s' "$2" | env $3 python3 "$H" $1 --publish;
 rm -f status/.last_publish; ok "remoto inválido: exit 0 e rápido" "$(fx Stop '{}' AAO_PUBLISH_REMOTE=https://invalid.invalid/x.git)"
 ok "JSON inválido no stdin: exit 0" "$(fx Stop 'not json {{{' X=1)"
 printf '#!/bin/sh\necho rejected >&2\nexit 1\n' > "$S/origin.git/hooks/pre-receive"; chmod +x "$S/origin.git/hooks/pre-receive"
-rm -f status/.last_publish; PAYLOAD='{"agent_type":"lucas"}' hook SubagentStop; ok "push recusado: exit 0" "$(fx Stop '{}' X=1)"
+rm -f status/.last_publish; PAYLOAD='{"agent_type":"lucas","agent_id":"a2"}' hook SubagentStop; ok "push recusado: exit 0" "$(fx Stop '{}' X=1)"
 rm -f "$S/origin.git/hooks/pre-receive"; rm -f status/.last_publish
 PAYLOAD='{}' hook Stop --publish; ok "depois de um push recusado, volta a publicar" "$(tail -n1 status/publish.log | grep -qE 'published|unchanged'; echo $?)"
 t0=$(date +%s); python3 "$H" Stop < <(sleep 12); rc=$?; ok "stdin aberto e mudo: desiste em ~5 s com exit 0" "$([ $rc -eq 0 ] && [ $(( $(date +%s) - t0 )) -le 9 ]; echo $?)"

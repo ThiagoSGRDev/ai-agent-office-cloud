@@ -32,6 +32,24 @@ Sem servidor, sem build, sem dependências. O frontend só **lê** um JSON públ
 
 `Stop` encerra o turno da sessão principal; subagentes podem continuar em segundo plano, então o `Stop` **não** altera o estado deles.
 
+### Quem pode mudar o estado (classificação no hook)
+
+Observado em sessão real: o Claude Code dispara `SubagentStop` com `agent_type` igual ao agente principal (`alex`) e um `agent_id`, ao fim de cada turno, **sem** `SubagentStart` e sem subagente algum. Tratar isso como "subagente concluiu" mostrava Alex como `completed` em vez de `idle`. Regras atuais de `office_hook.py`:
+
+- Sem `agent_id`, o evento é da sessão principal: `Stop` → Alex `idle`, `PreToolUse` → Alex `working`.
+- `SubagentStart` com `agent_id` e `agent_type` de um subagente conhecido (diferente de `alex`) registra o id numa tabela **local** (`status/subagents.json`, git-ignorada) e marca o agente `working`.
+- `SubagentStop` só conclui (`completed`) um agente quando o `agent_id` e o tipo batem com um início registrado. Com `agent_type` `alex`, vazio, desconhecido, sem id ou sem início correspondente, é **ignorado**: o estado público não muda.
+- `PreToolUse`/`Notification` dentro de um subagente só valem se o id estiver registrado (e renovam o registro). Qualquer outro evento com `agent_id` é ignorado.
+- Fora de ordem: um `SubagentStop` sem início fica guardado por 120 s (tabela `early`); se o `SubagentStart` do mesmo id chegar nessa janela, o início tardio não reabre o agente: ele fica `completed` quando não existe outra instância ativa do mesmo tipo (`start-after-stop`) e permanece `working` quando existe (a outra instância ainda está rodando). Em nenhum caso o id tardio fica registrado como ativo.
+- Duplicados: ao concluir um subagente, o id fica 120 s na tabela `done`. Um `SubagentStart` (ou `SubagentStop`) repetido para esse id e tipo é ignorado (`duplicate-start-after-stop` / `duplicate-stop`), então o agente continua `completed`. Passada a janela o id pode ser reutilizado; um duplicado que chegue mais de 120 s depois do fim volta a registrar o agente e é limpo pela expiração abaixo.
+- Várias instâncias do mesmo agente: o estado público é um por nome. Um `SubagentStop` (ou um `SubagentStart` tardio de um id já encerrado) só deixa o agente `completed` quando não resta nenhuma outra instância ativa daquele tipo; enquanto houver, o agente continua `working` (`stop-matched-others-active`).
+- `status/status.json` inválido: se o arquivo local for JSON malformado, vazio ou de forma errada (lista, string, número, booleano, `null`, `agents` que não seja objeto), ele é recriado no próximo evento e as entradas de agente que não sejam objetos são descartadas; as válidas são preservadas. A recuperação fica em `events.jsonl` (`recovery`: `malformed-json`, `not-an-object`, `agents-not-an-object`, `invalid-agent-entries` ou `unreadable`) e em `publish.log`, só com o rótulo, nunca com o conteúdo.
+- Expiração: registros sem atividade por 30 min (igual ao `STALE_S` do frontend) são descartados, e um subagente que ficou `working` sem registro vivo volta a `idle` (nunca a `completed`). Limitação: só `PreToolUse`/`Notification` renovam o registro; um subagente que fique mais de 30 min sem nenhum desses eventos (por exemplo uma única ferramenta longa) perde o registro, seu `SubagentStop` real é ignorado e ele termina em `idle`, não em `completed`.
+- Limite da tabela `status/subagents.json`: no máximo **64 registros ativos** (todos os tipos juntos) mais até **64 em `early`** e **64 em `done`** (no máximo 192 ids no total). Um registro ativo nunca é expulso: com 64 ativos, novos `SubagentStart` são ignorados (`registry-full`, auditado) e o agente novo não aparece como `working`, o que evita um `working` preso por falta de correlação. As tabelas `early` e `done` perdem primeiro os registros mais antigos. Limitação: com 64 subagentes simultâneos, o 65º fica invisível até haver vaga.
+- Concorrência: a leitura do relógio, a leitura e a gravação (atômica) da tabela acontecem dentro do mesmo lock do `record()`. Um carimbo até 60 s no futuro (relógio lido por hooks concorrentes) é tolerado; carimbos mais distantes no futuro são descartados.
+- Todo evento fica em `status/events.jsonl` com `accepted` e `reason` (inclusive os ignorados). O `agent_id` aparece lá só como impressão curta (`agent_ref`).
+- Nunca são publicados `agent_id`, caminho de transcript, prompt ou mensagens: o schema e a lista de campos permitidos continuam os mesmos.
+
 ## Proteção contra estados obsoletos (`docs/js/state.js`)
 
 Idade = relógio do navegador − `updated_at`.
@@ -85,7 +103,7 @@ Estilo "gente de bloco": cabeça grande e arredondada, corpo compacto, mãos de 
 
 ## Publicação sem bloquear a sessão (`office_hook.py`)
 
-Sempre sai com código 0, nunca imprime, leitura de stdin com limite de 5 s, prazo de 25 s para o git, no máximo um push a cada 30 s (o `Stop` sempre publica), só publica se o estado mudou, e retoma sozinho após uma falha. Todos os comandos em `settings.json` terminam com `|| true`, para que até um script ausente (código de saída 2, que bloquearia o `Stop`) não possa bloquear a sessão.
+Sempre sai com código 0, nunca imprime, leitura de stdin com limite de 5 s, prazo de 25 s para o git, só publica se o estado mudou, e retoma sozinho após uma falha. Estados finais (`Stop` e `SubagentStop`) nunca são limitados por frequência nem descartados: o hook marca `status/.dirty` e um único publicador (`status/.publish.lock`, não bloqueante) republica o estado mais recente enquanto houver pendência; quem não obtém o lock sai na hora, e uma falha ou estouro de prazo deixa o `.dirty` para o próximo evento. Eventos não finais com `--publish` mantêm o limite de um push a cada 30 s. Todos os comandos em `settings.json` terminam com `|| true`, para que até um script ausente (código de saída 2, que bloquearia o `Stop`) não possa bloquear a sessão.
 
 ## Segurança
 
