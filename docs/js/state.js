@@ -4,6 +4,7 @@ import { AGENTS, KNOWN_STATES, MAX_BYTES, FRESH_S, STALE_S, FUTURE_TOLERANCE_S, 
 /** Parse and validate the public status.json (schema 1). Returns null when invalid. */
 export function parseSnapshot(text) {
   if (typeof text !== "string" || text.length > MAX_BYTES) return null;
+  if (new TextEncoder().encode(text).length > MAX_BYTES) return null;   // real byte size
   let j;
   try { j = JSON.parse(text); } catch { return null; }
   if (!j || typeof j !== "object" || j.schema !== 1) return null;
@@ -63,21 +64,32 @@ export function resolveBanner(store, nowSec) {
 /** Polls the public JSON. On ANY failure the previous snapshot is dropped (never shown as live). */
 export function createStore(onChange) {
   const store = { status: "loading", snap: null };
+  let seq = 0;                                    // only the latest call may write state
   store.refresh = async function refresh() {
+    const my = ++seq;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
       const r = await fetch(DATA_URL, { cache: "no-store", signal: ctrl.signal, credentials: "omit", referrerPolicy: "no-referrer" });
       if (!r.ok) throw new Error("http " + r.status);
+      const len = Number(r.headers.get("content-length"));
+      if (Number.isFinite(len) && len > MAX_BYTES) {   // declared size too big: do not read the body
+        if (my === seq) { store.snap = null; store.status = "invalid"; }
+        return;
+      }
       const snap = parseSnapshot(await r.text());
-      store.snap = snap;
-      store.status = snap ? "ok" : "invalid";
+      if (my === seq) {
+        store.snap = snap;
+        store.status = snap ? "ok" : "invalid";
+      }
     } catch {
-      store.snap = null;
-      store.status = "error";
+      if (my === seq) {
+        store.snap = null;
+        store.status = "error";
+      }
     } finally {
       clearTimeout(timer);
-      onChange();
+      if (my === seq) onChange();
     }
   };
   return store;
