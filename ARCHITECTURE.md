@@ -108,6 +108,15 @@ Estilo "gente de bloco": cabeça grande e arredondada, corpo compacto, mãos de 
 
 Sempre sai com código 0, nunca imprime, leitura de stdin com limite de 5 s, prazo de 25 s para o git, só publica se o estado mudou, e retoma sozinho após uma falha. Estados finais (`Stop` e `SubagentStop`) nunca são limitados por frequência nem descartados: o hook marca `status/.dirty` e um único publicador (`status/.publish.lock`, não bloqueante) republica o estado mais recente enquanto houver pendência; quem não obtém o lock sai na hora, e uma falha ou estouro de prazo deixa o `.dirty` para o próximo evento. Eventos não finais com `--publish` mantêm o limite de um push a cada 30 s. Todos os comandos em `settings.json` terminam com `|| true`, para que até um script ausente (código de saída 2, que bloquearia o `Stop`) não possa bloquear a sessão.
 
+## Equipe (Alex, Lucas e Sofia)
+
+Fluxo fixo definido em `.claude/agents/*.md`: **Alex** escreve o escopo em `status/scope.txt` e delega **uma vez** ao **Lucas** (implementa) e **uma vez** à **Sofia** (revisa e entrega os testes); depois **Alex** roda `bash tests/qa_run.sh <suite>` e só entrega com a revisão da Sofia e a saída do runner. No máximo um retrabalho. Commit, push e merge só com autorização do usuário.
+
+- **Sem Bash para subagentes.** Lucas (`Read, Write, Edit, Glob, Grep`) e Sofia (`Read, Glob, Grep`) não executam comandos. Os testes rodam só pelo `tests/qa_run.sh`: lista fechada de suítes (`classify`, `publish`, `hook`, `state`, `guard`, `sandbox`), exatamente 1 argumento validado por `case` (sem `eval`), `env -i`, `HOME` temporário, `timeout 300` e saída limitada. Limitação: testes escritos pelos agentes são código que roda no contêiner (pasta `sandbox/`).
+- **Escrita restrita (`.claude/hooks/scope_guard.py`).** Hook `PreToolUse` registrado no `settings.json` com `--only lucas,sofia`: resolve `..` e symlinks (`realpath`), falha fechado, nunca permite `.claude/`, `.git/`, `.github/` nem `status/`. Sofia só escreveria em `tests/` e `sandbox/`; Lucas, nos prefixos de `status/scope.txt` (padrão `sandbox/`). O hook `hooks:` no frontmatter do agente **não** foi acionado neste ambiente (comprovado), e por isso o guarda fica no `settings.json`.
+- **Sofia sem `Write`.** A concessão da ferramenta à Sofia não foi aplicada (a edição foi negada pelo classificador de permissões e o guarda não foi comprovado para ela). A Sofia devolve o código dos testes no relatório e o Alex o salva sem alterações.
+- **`working` visível.** `SubagentStart` publica (`--publish`, isento do limite de 30 s), então o estado `working` de Lucas e Sofia aparece na página durante a execução. Nada de `agent_id` ou texto de tarefa é publicado.
+
 ## Segurança
 
 - Sem credenciais no frontend nem no repositório. CSP restringe a página a si mesma e a `raw.githubusercontent.com`.

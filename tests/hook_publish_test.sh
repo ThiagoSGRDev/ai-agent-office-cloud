@@ -132,6 +132,14 @@ PAYLOAD='{"agent_type":"lucas","agent_id":"Z9"}' hook SubagentStop --publish   #
 ok "H7 Alex working antigo (901 s) + evento ignorado com --publish: remoto mostra alex idle" "$([ "$(state alex)" = idle ]; echo $?)"
 ok "H7 .dirty ausente após a publicação" "$([ ! -e status/.dirty ]; echo $?)"
 
+# H8: SubagentStart --publish makes "working" visible, is exempt from the 30 s limit, and exposes no ids
+newenv
+PAYLOAD='{"agent_type":"lucas","agent_id":"id-lucas"}' hook SubagentStart --publish
+PAYLOAD='{"agent_type":"sofia","agent_id":"id-sofia"}' hook SubagentStart --publish
+ok "H8 SubagentStart --publish: lucas working no remoto" "$([ "$(state lucas)" = working ]; echo $?)"
+ok "H8 segundo SubagentStart dentro de 30 s tambem publica (sem rate limit): sofia working" "$([ "$(state sofia)" = working ]; echo $?)"
+ok "H8 nenhum agent_id no snapshot publico" "$(pub | grep -q 'id-lucas\|id-sofia\|agent_id'; [ $? -ne 0 ]; echo $?)"
+
 # Bonus: non-final events keep the 30 s rate limit and leave .dirty for a later final event
 newenv
 sstart lucas; sstart sofia
