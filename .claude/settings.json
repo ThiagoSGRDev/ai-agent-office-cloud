@@ -1,11 +1,71 @@
 {
   "agent": "alex",
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "timeout": 20, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SessionStart"}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "timeout": 20, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStart"}]}],
-    "PreToolUse": [{"hooks": [{"type": "command", "timeout": 20, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" PreToolUse"}]}],
-    "Notification": [{"hooks": [{"type": "command", "timeout": 20, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" Notification"}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "timeout": 40, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStop --publish"}]}],
-    "Stop": [{"hooks": [{"type": "command", "timeout": 40, "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" Stop --publish"}]}]
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SessionStart || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStart || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" PreToolUse || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 20,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" Notification || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 40,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" SubagentStop --publish || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 40,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/office_hook.py\" Stop --publish || true"
+          }
+        ]
+      }
+    ]
   }
 }

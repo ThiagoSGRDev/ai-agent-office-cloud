@@ -73,10 +73,9 @@ def record(payload):
         agents = st.get("agents") if isinstance(st.get("agents"), dict) else {}
         if agent and EVENT in STATE:
             agents[agent] = {"state": STATE[EVENT], "updated_at": now, "last_event": EVENT}
-        if EVENT == "Stop":
-            for n, a in list(agents.items()):
-                if a.get("state") == "working":
-                    agents[n] = {"state": "idle", "updated_at": now, "last_event": "Stop"}
+        # NOTE: "Stop" only ends the MAIN session's turn (Alex becomes idle via STATE). Subagents may
+        # still be running in the background, so their state is NOT touched here; if one never reports
+        # SubagentStop, the frontend expires its stale "working" claim by age.
         out = {"schema": 1, "generated_at": now, "agents": agents}
         tmp = sp + ".tmp"
         with open(tmp, "w") as f:
