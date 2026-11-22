@@ -314,9 +314,21 @@ ok "H1 Alex working há 901 s volta a idle com last_event Stop" "$([ "$(st alex)
 newenv
 h PreToolUse '{"agent_type":"alex"}'; agestate alex 899; h SubagentStop "$TRIG"
 ok "H2 Alex working há 899 s continua working" "$([ "$(st alex)" = working ]; echo $?)"
+# Deterministic boundary: the hook runs with time.time() frozen, so the age is exact and independent of the real clock
+hfix(){ local now="$1" ev="$2" pl="$3"; local out; out="$(printf '%s' "$pl" | python3 -c '
+import sys, time, runpy
+path, now, ev = sys.argv[1:4]
+time.time = lambda: float(now)
+sys.argv = [path, ev]
+runpy.run_path(path, run_name="__main__")' "$H" "$now" "$ev" 2>&1)"; local rc=$?
+  [ $rc -eq 0 ] && [ -z "$out" ] || { echo "  hfix $ev rc=$rc out=[$out]"; return 1; }; }
+T0=1800000000
 newenv
-h PreToolUse '{"agent_type":"alex"}'; agestate alex 900; h SubagentStop "$TRIG"
-ok "H2b Alex working há exatamente 900 s continua working (limite é > 900)" "$([ "$(st alex)" = working ]; echo $?)"
+hfix $T0 PreToolUse '{"agent_type":"alex"}'; hfix $((T0+900)) SubagentStop "$TRIG"
+ok "H2b Alex working há exatamente 900 s (relógio congelado) continua working (limite é > 900)" "$([ "$(st alex)" = working ] && [ "$(python3 -c "import json;print(json.load(open('status/status.json'))['agents']['alex']['updated_at'])")" = "$T0" ]; echo $?)"
+newenv
+hfix $T0 PreToolUse '{"agent_type":"alex"}'; hfix $((T0+901)) SubagentStop "$TRIG"
+ok "H1b Alex working há exatamente 901 s (relógio congelado) vira idle com last_event Stop" "$([ "$(st alex)" = idle ] && [ "$(le alex)" = Stop ]; echo $?)"
 newenv
 h PreToolUse '{"agent_type":"alex"}'; agestate alex 901; h PreToolUse '{"agent_type":"alex"}'
 ok "H3 Alex working há 901 s + novo PreToolUse: working com updated_at recente" "$([ "$(st alex)" = working ] && python3 -c "import json,time;d=json.load(open('status/status.json'))['agents']['alex'];assert d['updated_at']>=time.time()-5" 2>/dev/null; echo $?)"
