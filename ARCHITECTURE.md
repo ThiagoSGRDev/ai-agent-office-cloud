@@ -11,6 +11,8 @@ Sessão Claude Code (nuvem)                    GitHub (repo público)           
 
 Sem servidor, sem build, sem dependências. O frontend só **lê** um JSON público.
 
+Política de Git e papéis dos agentes: ver `CLAUDE.md`.
+
 ## Contrato de dados (`data/status.json`, schema 1)
 
 ```json
