@@ -3,7 +3,7 @@
     "alex": {
       "last_event": "Stop",
       "state": "idle",
-      "updated_at": 1795492682
+      "updated_at": 1795492690
     },
     "lucas": {
       "last_event": "SubagentStop",
@@ -16,6 +16,6 @@
       "updated_at": 1795487311
     }
   },
-  "generated_at": 1795492682,
+  "generated_at": 1795492690,
   "schema": 1
 }
