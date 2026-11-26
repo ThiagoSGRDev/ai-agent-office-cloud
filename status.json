@@ -6,11 +6,11 @@
       "updated_at": 1795699443
     },
     "lucas": {
-      "last_event": "SubagentStart",
-      "state": "working",
-      "updated_at": 1795699438
+      "last_event": "SubagentStop",
+      "state": "completed",
+      "updated_at": 1795699649
     }
   },
-  "generated_at": 1795699443,
+  "generated_at": 1795699649,
   "schema": 1
 }
