@@ -3,7 +3,7 @@
     "alex": {
       "last_event": "Stop",
       "state": "idle",
-      "updated_at": 1795749774
+      "updated_at": 1795749935
     },
     "lucas": {
       "last_event": "PreToolUse",
@@ -16,6 +16,6 @@
       "updated_at": 1795749931
     }
   },
-  "generated_at": 1795749931,
+  "generated_at": 1795749935,
   "schema": 1
 }
