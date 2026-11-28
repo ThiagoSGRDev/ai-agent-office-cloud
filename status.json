@@ -3,12 +3,12 @@
     "alex": {
       "last_event": "Stop",
       "state": "idle",
-      "updated_at": 1795758355
+      "updated_at": 1795871486
     },
     "lucas": {
       "last_event": "SubagentStart",
       "state": "working",
-      "updated_at": 1795758351
+      "updated_at": 1795871481
     },
     "sofia": {
       "last_event": "SubagentStop",
@@ -16,6 +16,6 @@
       "updated_at": 1795758339
     }
   },
-  "generated_at": 1795758355,
+  "generated_at": 1795871486,
   "schema": 1
 }
